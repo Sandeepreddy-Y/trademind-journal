@@ -49,6 +49,7 @@ export default function MT5Sync() {
   const [error, setError] = useState('');
   const [copied, setCopied] = useState(false);
   const [showSetup, setShowSetup] = useState(false);
+  const [setupType, setSetupType] = useState<'ea' | 'script'>('ea');
   const [originUrl, setOriginUrl] = useState('http://localhost:3000');
 
   useEffect(() => {
@@ -340,6 +341,32 @@ export default function MT5Sync() {
 
           {showSetup && (
             <Card className="p-6 space-y-6">
+              {/* Tab Selector */}
+              <div className="flex p-1 rounded-xl bg-slate-950/60 border border-slate-900">
+                <button
+                  type="button"
+                  onClick={() => setSetupType('ea')}
+                  className={`flex-1 py-2 px-3 rounded-lg text-[11px] font-bold transition-all cursor-pointer ${
+                    setupType === 'ea'
+                      ? 'bg-indigo-500 text-white shadow-lg shadow-indigo-500/10'
+                      : 'text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  Real-time Expert Advisor (EA) — Recommended
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSetupType('script')}
+                  className={`flex-1 py-2 px-3 rounded-lg text-[11px] font-bold transition-all cursor-pointer ${
+                    setupType === 'script'
+                      ? 'bg-indigo-500 text-white shadow-lg shadow-indigo-500/10'
+                      : 'text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  Manual Sync Script
+                </button>
+              </div>
+
               {/* API Key Section */}
               <div className="space-y-2">
                 <h4 className="text-xs font-bold text-slate-300 uppercase tracking-wider flex items-center gap-1.5">
@@ -348,7 +375,7 @@ export default function MT5Sync() {
                 </h4>
                 <p className="text-[10px] text-slate-500 leading-relaxed">
                   Paste this key into the <code className="text-indigo-400">InpApiKey</code> parameter
-                  when running the script. This links your MT5 trades to your TradeMind account.
+                  when running the MT5 code. This connects your MT5 trades to your account.
                 </p>
                 <div className="flex items-center gap-2">
                   <div className="flex-1 px-4 py-2.5 rounded-xl bg-slate-950/60 border border-slate-900 text-slate-300 font-mono text-xs select-all overflow-x-auto">
@@ -376,48 +403,82 @@ export default function MT5Sync() {
               {/* Steps */}
               <div className="space-y-4">
                 <h4 className="text-xs font-bold text-slate-300 uppercase tracking-wider">
-                  Installation Steps
+                  {setupType === 'ea' ? 'Expert Advisor Installation' : 'Script Installation'} Steps
                 </h4>
 
                 <div className="space-y-3">
-                  {[
-                    {
-                      step: 1,
-                      title: 'Copy the script file',
-                      desc: 'Copy SyncTrades.mq5 from your project root to your MT5 Scripts folder:',
-                      code: 'MQL5\\Scripts\\SyncTrades.mq5',
-                    },
-                    {
-                      step: 2,
-                      title: 'Enable WebRequest in MT5',
-                      desc: 'Open MT5 → Tools → Options → Expert Advisors → Check "Allow WebRequest for listed URL" and add:',
-                      code: originUrl,
-                    },
-                    {
-                      step: 3,
-                      title: 'Compile the script',
-                      desc: 'Open MetaEditor (F4) → Open SyncTrades.mq5 → Press Compile (F7). Ensure zero errors.',
-                      code: null,
-                    },
-                    {
-                      step: 4,
-                      title: 'Start your TradeMind dev server',
-                      desc: 'Make sure the Next.js dev server is running before executing the script:',
-                      code: 'npm run dev',
-                    },
-                    {
-                      step: 5,
-                      title: 'Run the script in MT5',
-                      desc: 'In MT5: Navigator → Scripts → SyncTrades → Double-click or drag to chart. Set your API Key and days to sync.',
-                      code: null,
-                    },
-                    {
-                      step: 6,
-                      title: 'Import into TradeMind',
-                      desc: 'After the script runs, come back here and click "Import All Trades". Alternatively, enable the live listener for automatic detection.',
-                      code: null,
-                    },
-                  ].map((item) => (
+                  {(setupType === 'ea'
+                    ? [
+                        {
+                          step: 1,
+                          title: 'Copy the EA file',
+                          desc: 'Copy TradeMindEA.mq5 from your project root directory to your MT5 Experts folder:',
+                          code: 'MQL5\\Experts\\TradeMindEA.mq5',
+                        },
+                        {
+                          step: 2,
+                          title: 'Enable WebRequest in MT5',
+                          desc: 'Open MT5 → Tools → Options → Expert Advisors → Check "Allow WebRequest for listed URL" and add your domain:',
+                          code: originUrl,
+                        },
+                        {
+                          step: 3,
+                          title: 'Compile the Expert Advisor',
+                          desc: 'Open MetaEditor (F4) → Open TradeMindEA.mq5 → Press Compile (F7). Ensure zero errors or warnings are shown.',
+                          code: null,
+                        },
+                        {
+                          step: 4,
+                          title: 'Launch the EA on a chart',
+                          desc: 'In MT5 Navigator panel: drag TradeMindEA to any active chart. Under Inputs set your API Key, and set Server URL to:',
+                          code: `${originUrl}/api/mt5/trades`,
+                        },
+                        {
+                          step: 5,
+                          title: 'Enable Algo Trading',
+                          desc: 'Check "Allow Algo Trading" in the EA options. Click the "Algo Trading" button in the MT5 top toolbar (it should turn green).',
+                          code: null,
+                        },
+                        {
+                          step: 6,
+                          title: 'Enjoy Real-time Auto Synchronization',
+                          desc: 'The EA will automatically detect and sync every trade as soon as it closes. Trades appear instantly on your TradeMind dashboard without manual refreshing!',
+                          code: null,
+                        },
+                      ]
+                    : [
+                        {
+                          step: 1,
+                          title: 'Copy the script file',
+                          desc: 'Copy SyncTrades.mq5 from your project root to your MT5 Scripts folder:',
+                          code: 'MQL5\\Scripts\\SyncTrades.mq5',
+                        },
+                        {
+                          step: 2,
+                          title: 'Enable WebRequest in MT5',
+                          desc: 'Open MT5 → Tools → Options → Expert Advisors → Check "Allow WebRequest for listed URL" and add your domain:',
+                          code: originUrl,
+                        },
+                        {
+                          step: 3,
+                          title: 'Compile the script',
+                          desc: 'Open MetaEditor (F4) → Open SyncTrades.mq5 → Press Compile (F7). Ensure zero errors.',
+                          code: null,
+                        },
+                        {
+                          step: 4,
+                          title: 'Run the script in MT5',
+                          desc: 'In MT5 Navigator: double-click SyncTrades under Scripts. Set your API Key and days to sync. Server URL should be set to:',
+                          code: `${originUrl}/api/sync-trades`,
+                        },
+                        {
+                          step: 5,
+                          title: 'Import into TradeMind',
+                          desc: 'After the script prints success, return to this page and click the "Import All Trades" button above to pull the buffered records.',
+                          code: null,
+                        },
+                      ]
+                  ).map((item) => (
                     <div
                       key={item.step}
                       className="flex gap-4 p-4 rounded-xl bg-slate-950/20 border border-slate-900/40"
@@ -429,7 +490,7 @@ export default function MT5Sync() {
                         <h5 className="text-xs font-bold text-slate-200">{item.title}</h5>
                         <p className="text-[10px] text-slate-500 leading-relaxed">{item.desc}</p>
                         {item.code && (
-                          <code className="block mt-1.5 px-3 py-1.5 rounded-lg bg-slate-950/60 border border-slate-800/50 text-indigo-300 font-mono text-[11px]">
+                          <code className="block mt-1.5 px-3 py-1.5 rounded-lg bg-slate-950/60 border border-slate-800/50 text-indigo-300 font-mono text-[11px] break-all select-all">
                             {item.code}
                           </code>
                         )}
