@@ -131,39 +131,122 @@ export default function Journal() {
       // Check if MT5 HTML report or CSV
       const isHtml = file.name.endsWith('.html') || file.name.endsWith('.htm') || text.includes('<html') || text.includes('<table');
 
+      const parseNumberSafe = (val: string): number => {
+        if (!val) return 0;
+        // Clean non-breaking spaces, regular spaces, commas, and standard currency suffixes (e.g. USD, EUR)
+        const clean = val.replace(/[\xa0\s,]/g, '').replace(/[a-z]{3}$/i, '');
+        const num = parseFloat(clean);
+        return isNaN(num) ? 0 : num;
+      };
+
       if (isHtml) {
-        // Parse MT5 HTML report
+        // Parse HTML report using a dynamic table column mapper to support MT4 & MT5 variations
         const parser = new DOMParser();
         const doc = parser.parseFromString(text, 'text/html');
-        const rows = doc.querySelectorAll('tr');
+        const tables = doc.querySelectorAll('table');
 
-        rows.forEach((row) => {
-          const cells = Array.from(row.querySelectorAll('td')).map(td => td.textContent?.trim() || '');
-          if (cells.length >= 13) {
-            const ticket = parseInt(cells[0]);
-            if (isNaN(ticket) || ticket <= 0) return;
+        tables.forEach((table) => {
+          const rows = Array.from(table.querySelectorAll('tr'));
+          if (rows.length < 2) return;
 
-            const typeRaw = cells[2].toLowerCase();
-            if (!typeRaw.includes('buy') && !typeRaw.includes('sell')) return;
+          // Locate the transaction/positions table header
+          let headerRowIndex = -1;
+          let colIndices = {
+            position: -1,
+            openTime: -1,
+            closeTime: -1,
+            type: -1,
+            volume: -1,
+            symbol: -1,
+            openPrice: -1,
+            closePrice: -1,
+            sl: -1,
+            tp: -1,
+            commission: -1,
+            swap: -1,
+            profit: -1,
+            comment: -1
+          };
 
-            const volume = parseFloat(cells[3]);
-            const symbol = cells[4];
-            const entryPrice = parseFloat(cells[5]);
-            const sl = parseFloat(cells[6]) || 0;
-            const tp = parseFloat(cells[7]) || 0;
-            const exitPrice = parseFloat(cells[9]);
-            const commission = parseFloat(cells[10]) || 0;
-            const swap = parseFloat(cells[11]) || 0;
-            const profit = parseFloat(cells[12]);
+          for (let r = 0; r < Math.min(rows.length, 10); r++) {
+            const cells = Array.from(rows[r].querySelectorAll('th, td')).map(c => c.textContent?.trim().toLowerCase() || '');
+            
+            // Check if this row looks like the main closed positions header
+            const hasSymbol = cells.includes('symbol') || cells.includes('item');
+            const hasTicket = cells.includes('position') || cells.includes('ticket') || cells.includes('deal');
+            const hasProfit = cells.includes('profit');
+            
+            if (hasSymbol && hasTicket && hasProfit) {
+              headerRowIndex = r;
+              let timeOccurrences = 0;
+              let priceOccurrences = 0;
 
-            if (!symbol || isNaN(volume) || isNaN(entryPrice) || isNaN(exitPrice) || isNaN(profit)) return;
+              cells.forEach((cellText, idx) => {
+                if (cellText.includes('position') || cellText.includes('ticket') || cellText.includes('deal')) {
+                  colIndices.position = idx;
+                } else if (cellText.includes('time')) {
+                  timeOccurrences++;
+                  if (timeOccurrences === 1) colIndices.openTime = idx;
+                  else colIndices.closeTime = idx;
+                } else if (cellText.includes('type')) {
+                  colIndices.type = idx;
+                } else if (cellText.includes('volume') || cellText.includes('size') || cellText.includes('lots')) {
+                  colIndices.volume = idx;
+                } else if (cellText.includes('symbol') || cellText.includes('item')) {
+                  colIndices.symbol = idx;
+                } else if (cellText.includes('price')) {
+                  priceOccurrences++;
+                  if (priceOccurrences === 1) colIndices.openPrice = idx;
+                  else colIndices.closePrice = idx;
+                } else if (cellText.includes('s / l') || cellText.includes('sl') || cellText.includes('s/l')) {
+                  colIndices.sl = idx;
+                } else if (cellText.includes('t / p') || cellText.includes('tp') || cellText.includes('t/p')) {
+                  colIndices.tp = idx;
+                } else if (cellText.includes('commission')) {
+                  colIndices.commission = idx;
+                } else if (cellText.includes('swap')) {
+                  colIndices.swap = idx;
+                } else if (cellText.includes('profit')) {
+                  colIndices.profit = idx;
+                } else if (cellText.includes('comment')) {
+                  colIndices.comment = idx;
+                }
+              });
+              break;
+            }
+          }
 
-            const openTimeRaw = cells[1].replace(/\./g, '-');
-            const closeTimeRaw = cells[8].replace(/\./g, '-');
+          if (headerRowIndex === -1) return;
 
+          // Parse records below the header row
+          for (let r = headerRowIndex + 1; r < rows.length; r++) {
+            const cells = Array.from(rows[r].querySelectorAll('td')).map(td => td.textContent?.trim() || '');
+            if (cells.length < 8) continue;
+
+            const ticketVal = parseInt(cells[colIndices.position] || '');
+            if (isNaN(ticketVal) || ticketVal <= 0) continue;
+
+            const typeRaw = (cells[colIndices.type] || '').toLowerCase();
+            if (!typeRaw.includes('buy') && !typeRaw.includes('sell')) continue;
+
+            const symbol = cells[colIndices.symbol] || '';
+            if (!symbol || symbol.toLowerCase().includes('total') || symbol.toLowerCase().includes('balance')) continue;
+
+            const volume = parseNumberSafe(cells[colIndices.volume]);
+            const entryPrice = parseNumberSafe(cells[colIndices.openPrice]);
+            const exitPrice = parseNumberSafe(cells[colIndices.closePrice]);
+            const sl = parseNumberSafe(cells[colIndices.sl]);
+            const tp = parseNumberSafe(cells[colIndices.tp]);
+            const commission = parseNumberSafe(cells[colIndices.commission]);
+            const swap = parseNumberSafe(cells[colIndices.swap]);
+            const profit = parseNumberSafe(cells[colIndices.profit]);
+
+            const openTimeRaw = (cells[colIndices.openTime] || '').replace(/\./g, '-');
             const openParts = openTimeRaw.split(' ');
-            const entryDate = openParts[0];
+            const entryDate = openParts[0] || new Date().toISOString().split('T')[0];
             const entryTime = openParts[1] ? openParts[1].substring(0, 5) : '00:00';
+
+            const comment = cells[colIndices.comment] || '';
 
             parsedTrades.push({
               pair: symbol.toUpperCase(),
@@ -178,8 +261,8 @@ export default function Journal() {
               pnl: profit,
               date: entryDate,
               time: entryTime,
-              notes: `Imported from MT5 HTML Report. Comment: ${cells[13] || ''}`,
-              reason: 'MT5 HTML Import',
+              notes: `Imported from MT Report. Comment: ${comment}`,
+              reason: 'MT HTML Import',
               logic: 'Imported trade history',
               entryConfirmations: [],
               emotion: 'Calm',
@@ -187,12 +270,12 @@ export default function Journal() {
               mistakes: [],
               lessons: '',
               improvement: '',
-              tags: ['mt5-import', 'html-upload'],
-              strategy: 'MT5 Import',
+              tags: ['mt-import', 'html-upload'],
+              strategy: 'MT Import',
               riskPct: 1,
               rewardPct: 2,
-              mt5Ticket: ticket,
-              source: 'MT5 HTML'
+              mt5Ticket: ticketVal,
+              source: 'MetaTrader HTML'
             });
           }
         });
@@ -227,18 +310,18 @@ export default function Journal() {
 
           const pairVal = cells[idxPair !== -1 ? idxPair : (idxSymbol !== -1 ? idxSymbol : 0)];
           const directionVal = cells[idxDirection !== -1 ? idxDirection : (idxType !== -1 ? idxType : 1)];
-          const lotVal = parseFloat(cells[idxLots !== -1 ? idxLots : (idxVolume !== -1 ? idxVolume : 2)]);
-          const entryVal = parseFloat(cells[idxEntryPrice !== -1 ? idxEntryPrice : 3]);
-          const exitVal = parseFloat(cells[idxExitPrice !== -1 ? idxExitPrice : 4]);
-          const slVal = parseFloat(cells[idxSL !== -1 ? idxSL : -1]) || 0;
-          const tpVal = parseFloat(cells[idxTP !== -1 ? idxTP : -1]) || 0;
-          const pnlVal = parseFloat(cells[idxPnL !== -1 ? idxPnL : (idxProfit !== -1 ? idxProfit : -1)]) || 0;
+          const lotVal = parseNumberSafe(cells[idxLots !== -1 ? idxLots : (idxVolume !== -1 ? idxVolume : 2)]);
+          const entryVal = parseNumberSafe(cells[idxEntryPrice !== -1 ? idxEntryPrice : 3]);
+          const exitVal = parseNumberSafe(cells[idxExitPrice !== -1 ? idxExitPrice : 4]);
+          const slVal = parseNumberSafe(cells[idxSL !== -1 ? idxSL : -1]);
+          const tpVal = parseNumberSafe(cells[idxTP !== -1 ? idxTP : -1]);
+          const pnlVal = parseNumberSafe(cells[idxPnL !== -1 ? idxPnL : (idxProfit !== -1 ? idxProfit : -1)]);
           const dateVal = cells[idxDate !== -1 ? idxDate : -1] || new Date().toISOString().split('T')[0];
           const timeVal = cells[idxTime !== -1 ? idxTime : -1] || '00:00';
-          const commissionVal = parseFloat(cells[idxCommission !== -1 ? idxCommission : -1]) || 0;
-          const swapVal = parseFloat(cells[idxSwap !== -1 ? idxSwap : -1]) || 0;
+          const commissionVal = parseNumberSafe(cells[idxCommission !== -1 ? idxCommission : -1]);
+          const swapVal = parseNumberSafe(cells[idxSwap !== -1 ? idxSwap : -1]);
 
-          if (pairVal && directionVal && !isNaN(lotVal) && !isNaN(entryVal) && !isNaN(exitVal)) {
+          if (pairVal && directionVal && lotVal > 0 && entryVal > 0 && exitVal > 0) {
             parsedTrades.push({
               pair: pairVal.toUpperCase(),
               direction: directionVal.toLowerCase().includes('buy') ? 'Buy' : 'Sell',
