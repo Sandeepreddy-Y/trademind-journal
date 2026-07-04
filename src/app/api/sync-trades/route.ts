@@ -81,8 +81,8 @@ function transformMT5Trade(mt5: MT5TradePayload, userId: string) {
   const pnl = mt5.pnl;
 
   // RR calculation using actual price movement vs risk
-  // Since we don't have SL/TP from MT5, compute actual RR from prices
-  const risk = Math.abs(mt5.entryPrice - mt5.exitPrice);
+  // Since we don't have SL/TP from MT5, compute actual RR from prices if closed
+  const risk = mt5.exitPrice > 0 ? Math.abs(mt5.entryPrice - mt5.exitPrice) : 0;
   const rr = risk > 0 ? Number((Math.abs(pnl) / risk).toFixed(2)) : 0;
 
   // Status determination
@@ -118,7 +118,9 @@ function transformMT5Trade(mt5: MT5TradePayload, userId: string) {
     year,
     session,
     holdingTime,
-    notes: `MT5 Position #${mt5.positionId} — Auto-imported`,
+    notes: mt5.exitPrice > 0 
+      ? `MT5 Position #${mt5.positionId} — Auto-imported` 
+      : `MT5 Position #${mt5.positionId} — Running Open Position`,
     reason: 'MT5 Auto Import',
     logic: '',
     entryConfirmations: [],

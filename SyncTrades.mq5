@@ -5,24 +5,29 @@
 //+------------------------------------------------------------------+
 #property copyright "TradeMind"
 #property link      "https://trademind.app"
-#property version   "2.00"
+#property version   "2.10"
 #property script_show_inputs
 
 // --- Script Parameters ---
-input int      InpDaysToSync = 30;                                           // Days of history to sync
-input string   InpServerUrl  = "http://localhost:3000/api/sync-trades";      // TradeMind API URL
-input string   InpApiKey     = "";                                           // API Key (from Settings page)
+input bool     InpSyncAllHistory = false;                                      // Sync ALL account history
+input int      InpDaysToSync     = 30;                                         // Days of history to sync (if SyncAllHistory=false)
+input string   InpServerUrl      = "http://localhost:3000/api/sync-trades";    // TradeMind API URL
+input string   InpApiKey         = "";                                         // API Key (User ID from Sync Page)
 
 //+------------------------------------------------------------------+
 //| Script program start function                                    |
 //+------------------------------------------------------------------+
 void OnStart()
 {
-   Print("TradeMind MT5 Sync v2.0 — Starting...");
+   Print("TradeMind MT5 Sync v2.10 — Starting...");
    
-   // Select history range
-   datetime fromDate = TimeCurrent() - InpDaysToSync * 24 * 3600;
-   datetime toDate   = TimeCurrent();
+   // --- Select history range ---
+   datetime fromDate = 0;
+   if(!InpSyncAllHistory)
+   {
+      fromDate = TimeCurrent() - InpDaysToSync * 24 * 3600;
+   }
+   datetime toDate = TimeCurrent();
    
    if(!HistorySelect(fromDate, toDate))
    {
@@ -31,11 +36,12 @@ void OnStart()
    }
    
    int totalDeals = HistoryDealsTotal();
-   Print("Total deals in selected period: ", totalDeals);
+   Print("History deals found: ", totalDeals);
    
    string jsonPayload = "{\"apiKey\":\"" + InpApiKey + "\",\"trades\":[";
    int exportCount = 0;
    
+   // 1. Process CLOSED Trades from Deal History
    for(int i = 0; i < totalDeals; i++)
    {
       ulong dealTicket = HistoryDealGetTicket(i);
@@ -122,7 +128,7 @@ void OnStart()
       string exitDateStr = StringFormat("%04d-%02d-%02d", exitDt.year, exitDt.mon, exitDt.day);
       string exitTimeStr = StringFormat("%02d:%02d", exitDt.hour, exitDt.min);
       
-      // --- Construct JSON object for this trade ---
+      // --- Construct JSON object for closed trade ---
       if(exportCount > 0) jsonPayload += ",";
       
       jsonPayload += "{";
@@ -145,16 +151,69 @@ void OnStart()
       exportCount++;
    }
    
+   // 2. Process ACTIVE/OPEN Positions
+   int activePositions = PositionsTotal();
+   Print("Active running positions found: ", activePositions);
+   
+   for(int i = 0; i < activePositions; i++)
+   {
+      string symbol = PositionGetSymbol(i);
+      if(symbol != "")
+      {
+         double volume      = PositionGetDouble(POSITION_VOLUME);
+         double entryPrice  = PositionGetDouble(POSITION_PRICE_OPEN);
+         double currentPrice= PositionGetDouble(POSITION_PRICE_CURRENT);
+         double profit      = PositionGetDouble(POSITION_PROFIT);
+         double commission  = PositionGetDouble(POSITION_COMMISSION);
+         double swap        = PositionGetDouble(POSITION_SWAP);
+         long posType       = PositionGetInteger(POSITION_TYPE);
+         datetime entryTime = (datetime)PositionGetInteger(POSITION_TIME);
+         ulong posTicket    = (ulong)PositionGetInteger(POSITION_TICKET);
+         
+         string direction = (posType == POSITION_TYPE_BUY) ? "Buy" : "Sell";
+         
+         // Format entry datetime
+         MqlDateTime entryDt;
+         TimeToStruct(entryTime, entryDt);
+         string entryDateStr = StringFormat("%04d-%02d-%02d", entryDt.year, entryDt.mon, entryDt.day);
+         string entryTimeStr = StringFormat("%02d:%02d", entryDt.hour, entryDt.min);
+         
+         int digits = (int)SymbolInfoInteger(symbol, SYMBOL_DIGITS);
+         if(digits <= 0) digits = 5;
+         
+         if(exportCount > 0) jsonPayload += ",";
+         
+         jsonPayload += "{";
+         jsonPayload += "\"ticket\":" + IntegerToString((long)posTicket) + ",";
+         jsonPayload += "\"positionId\":" + IntegerToString((long)posTicket) + ",";
+         jsonPayload += "\"symbol\":\"" + symbol + "\",";
+         jsonPayload += "\"direction\":\"" + direction + "\",";
+         jsonPayload += "\"lotSize\":" + DoubleToString(volume, 2) + ",";
+         jsonPayload += "\"entryPrice\":" + DoubleToString(entryPrice, digits) + ",";
+         jsonPayload += "\"exitPrice\":0.0,"; // 0 indicates the position is still running (Open)
+         jsonPayload += "\"entryDate\":\"" + entryDateStr + "\",";
+         jsonPayload += "\"entryTime\":\"" + entryTimeStr + "\",";
+         jsonPayload += "\"exitDate\":\"\",";
+         jsonPayload += "\"exitTime\":\"\",";
+         jsonPayload += "\"pnl\":" + DoubleToString(profit, 2) + ",";
+         jsonPayload += "\"commission\":" + DoubleToString(MathAbs(commission), 2) + ",";
+         jsonPayload += "\"swap\":" + DoubleToString(MathAbs(swap), 2);
+         jsonPayload += "}";
+         
+         exportCount++;
+      }
+   }
+   
    jsonPayload += "]}";
    
    if(exportCount == 0)
    {
-      Print("No closed positions found in the last ", InpDaysToSync, " days.");
-      Alert("No closed trades to sync.");
+      Print("No closed or running positions found to sync.");
+      Alert("No trades found to sync.");
       return;
    }
    
-   Print("Syncing ", exportCount, " closed trades to TradeMind...");
+   Print("Syncing ", exportCount, " trades (closed + running) to TradeMind...");
    
    // --- Send HTTP POST request ---
    char postData[];
@@ -188,7 +247,7 @@ void OnStart()
    {
       string response = CharArrayToString(resultData, 0, WHOLE_ARRAY, CP_UTF8);
       Print("Sync successful! Server response: ", response);
-      Alert("✓ Successfully synced " + IntegerToString(exportCount) + " trades to TradeMind!");
+      Alert("✓ Successfully synced " + IntegerToString(exportCount) + " trades (closed + running) to TradeMind!");
    }
    else
    {

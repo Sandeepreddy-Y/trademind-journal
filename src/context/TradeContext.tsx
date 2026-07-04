@@ -190,36 +190,47 @@ export const TradeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       return { imported: 0, skipped: 0 };
     }
 
-    const existingIds = new Set(trades.map((t) => t.id));
+    const existingTradesMap = new Map(trades.map((t) => [t.id, t]));
     let imported = 0;
     let skipped = 0;
 
     for (const mt5Trade of data.trades) {
-      // Deduplicate — skip if already exists
-      if (existingIds.has(mt5Trade.id)) {
-        skipped++;
-        continue;
+      const existing = existingTradesMap.get(mt5Trade.id);
+
+      if (existing) {
+        // If the trade in the local DB is already closed/finalized, we skip it
+        const isExistingOpen = existing.status === 'Open';
+        const isNewOpen = mt5Trade.status === 'Open';
+        const pnlChanged = existing.pnl !== mt5Trade.pnl;
+        const exitPriceChanged = existing.exitPrice !== mt5Trade.exitPrice;
+
+        const shouldUpdate = isExistingOpen && (!isNewOpen || pnlChanged || exitPriceChanged);
+
+        if (!shouldUpdate) {
+          skipped++;
+          continue;
+        }
       }
 
-      // Override userId with the authenticated user
+      // Override userId with the authenticated user and preserve manual updates
       const trade: Trade = {
         ...mt5Trade,
         userId: user.uid,
-        stopLoss: mt5Trade.stopLoss || 0,
-        takeProfit: mt5Trade.takeProfit || 0,
-        riskPct: mt5Trade.riskPct || 0,
-        rewardPct: mt5Trade.rewardPct || 0,
-        notes: mt5Trade.notes || '',
-        reason: mt5Trade.reason || 'MT5 Auto Import',
-        logic: mt5Trade.logic || '',
-        entryConfirmations: mt5Trade.entryConfirmations || [],
-        emotion: mt5Trade.emotion || '',
-        confidence: mt5Trade.confidence || 5,
-        mistakes: mt5Trade.mistakes || [],
-        lessons: mt5Trade.lessons || '',
-        improvement: mt5Trade.improvement || '',
-        tags: mt5Trade.tags || ['mt5-import'],
-        strategy: mt5Trade.strategy || 'MT5 Sync',
+        stopLoss: existing?.stopLoss || mt5Trade.stopLoss || 0,
+        takeProfit: existing?.takeProfit || mt5Trade.takeProfit || 0,
+        riskPct: existing?.riskPct || mt5Trade.riskPct || 0,
+        rewardPct: existing?.rewardPct || mt5Trade.rewardPct || 0,
+        notes: existing?.notes || mt5Trade.notes || (mt5Trade.exitPrice > 0 ? `MT5 Position #${mt5Trade.positionId} — Auto-imported` : `MT5 Position #${mt5Trade.positionId} — Running Open Position`),
+        reason: existing?.reason || mt5Trade.reason || 'MT5 Auto Import',
+        logic: existing?.logic || mt5Trade.logic || '',
+        entryConfirmations: existing?.entryConfirmations || mt5Trade.entryConfirmations || [],
+        emotion: existing?.emotion || mt5Trade.emotion || '',
+        confidence: existing?.confidence || mt5Trade.confidence || 5,
+        mistakes: existing?.mistakes || mt5Trade.mistakes || [],
+        lessons: existing?.lessons || mt5Trade.lessons || '',
+        improvement: existing?.improvement || mt5Trade.improvement || '',
+        tags: existing?.tags || mt5Trade.tags || ['mt5-import'],
+        strategy: existing?.strategy || mt5Trade.strategy || 'MT5 Sync',
       };
 
       await dbService.saveTrade(trade);
