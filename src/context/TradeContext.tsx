@@ -34,6 +34,9 @@ interface TradeContextType {
     accountId: string,
     environment: 'demo' | 'live'
   ) => Promise<{ count: number }>;
+  bulkAddTrades: (
+    newTradesList: Omit<Trade, 'id' | 'userId' | 'day' | 'week' | 'month' | 'year' | 'session' | 'holdingTime' | 'rr' | 'pnl' | 'status' | 'createdAt'>[]
+  ) => Promise<{ imported: number; skipped: number }>;
 }
 
 const TradeContext = createContext<TradeContextType | undefined>(undefined);
@@ -384,6 +387,59 @@ export const TradeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     return { count: data.count };
   };
 
+  const bulkAddTrades = async (
+    newTradesList: Omit<Trade, 'id' | 'userId' | 'day' | 'week' | 'month' | 'year' | 'session' | 'holdingTime' | 'rr' | 'pnl' | 'status' | 'createdAt'>[]
+  ): Promise<{ imported: number; skipped: number }> => {
+    if (!user) throw new Error('Authentication required');
+
+    const existingTrades = trades;
+    const existingTickets = new Set(
+      existingTrades.map((t) => t.mt5Ticket).filter(Boolean)
+    );
+    const existingKeys = new Set(
+      existingTrades.map(
+        (t) => `${t.pair}_${t.direction}_${t.entryPrice}_${t.exitPrice}_${t.date}_${t.time}`
+      )
+    );
+
+    const tradesToSave: Trade[] = [];
+    let skipped = 0;
+
+    for (const data of newTradesList) {
+      if (data.mt5Ticket && existingTickets.has(data.mt5Ticket)) {
+        skipped++;
+        continue;
+      }
+      const uniqueKey = `${data.pair}_${data.direction}_${data.entryPrice}_${data.exitPrice}_${data.date}_${data.time}`;
+      if (existingKeys.has(uniqueKey)) {
+        skipped++;
+        continue;
+      }
+
+      const tradeId = 'trade_' + Math.random().toString(36).substr(2, 9);
+      
+      const enriched = enrichTradeFields(
+        {
+          ...data,
+          id: tradeId,
+          userId: user.uid,
+          createdAt: Date.now(),
+        } as Trade,
+        data.date,
+        data.time
+      );
+
+      tradesToSave.push(enriched);
+    }
+
+    if (tradesToSave.length > 0) {
+      await dbService.saveTradesBulk(tradesToSave);
+      setTrades((prev) => [...tradesToSave, ...prev]);
+    }
+
+    return { imported: tradesToSave.length, skipped };
+  };
+
   return (
     <TradeContext.Provider
       value={{
@@ -400,6 +456,7 @@ export const TradeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         deleteGoal,
         importMT5Trades,
         syncBrokerTrades,
+        bulkAddTrades,
       }}
     >
       {children}

@@ -97,6 +97,37 @@ export const saveTrade = async (trade: Trade): Promise<void> => {
   }
 };
 
+export const saveTradesBulk = async (trades: Trade[]): Promise<void> => {
+  if (trades.length === 0) return;
+  const userId = trades[0].userId;
+
+  if (isFirebaseEnabled && db) {
+    try {
+      const promises = trades.map(async (trade) => {
+        const docRef = doc(db, 'trades', trade.id);
+        await setDoc(docRef, trade, { merge: true });
+      });
+      await Promise.all(promises);
+      return;
+    } catch (e) {
+      console.error('Firestore saveTradesBulk error, falling back to localStorage:', e);
+    }
+  }
+
+  // LocalStorage fallback
+  if (typeof window !== 'undefined') {
+    const existing = await getTrades(userId);
+    const existingMap = new Map(existing.map(t => [t.id, t]));
+    
+    trades.forEach((trade) => {
+      existingMap.set(trade.id, trade);
+    });
+    
+    const updated = Array.from(existingMap.values());
+    localStorage.setItem(`${LOCAL_TRADES_KEY}_${userId}`, JSON.stringify(updated));
+  }
+};
+
 export const deleteTrade = async (userId: string, tradeId: string): Promise<void> => {
   if (isFirebaseEnabled && db) {
     try {

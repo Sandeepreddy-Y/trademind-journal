@@ -23,12 +23,14 @@ import {
   ChevronDown,
   X,
   FileSpreadsheet,
-  FileText
+  FileText,
+  Upload,
+  AlertCircle
 } from 'lucide-react';
 
 export default function Journal() {
   const { user, loading: authLoading } = useAuth();
-  const { trades, deleteTrade, loading: tradesLoading } = useTrades();
+  const { trades, deleteTrade, bulkAddTrades, loading: tradesLoading } = useTrades();
   const router = useRouter();
 
   // Search & Filter States
@@ -42,6 +44,7 @@ export default function Journal() {
 
   // Modal / Editing / Lightbox States
   const [isLogModalOpen, setIsLogModalOpen] = useState(false);
+  const [isImportModalOpen, setIsImportModalOpen] = useState(false);
   const [editTradeId, setEditTradeId] = useState<string | undefined>(undefined);
   const [lightboxImage, setLightboxImage] = useState<string | null>(null);
   const [selectedTradeForDetails, setSelectedTradeForDetails] = useState<any>(null);
@@ -109,6 +112,179 @@ export default function Journal() {
     setIsLogModalOpen(true);
   };
 
+  const [importingState, setImportingState] = useState(false);
+  const [importError, setImportError] = useState<string | null>(null);
+  const [importFeedback, setImportFeedback] = useState<{ imported: number; skipped: number } | null>(null);
+
+  const handleImportFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setImportingState(true);
+    setImportError(null);
+    setImportFeedback(null);
+
+    try {
+      const text = await file.text();
+      let parsedTrades: any[] = [];
+
+      // Check if MT5 HTML report or CSV
+      const isHtml = file.name.endsWith('.html') || file.name.endsWith('.htm') || text.includes('<html') || text.includes('<table');
+
+      if (isHtml) {
+        // Parse MT5 HTML report
+        const parser = new DOMParser();
+        const doc = parser.parseFromString(text, 'text/html');
+        const rows = doc.querySelectorAll('tr');
+
+        rows.forEach((row) => {
+          const cells = Array.from(row.querySelectorAll('td')).map(td => td.textContent?.trim() || '');
+          if (cells.length >= 13) {
+            const ticket = parseInt(cells[0]);
+            if (isNaN(ticket) || ticket <= 0) return;
+
+            const typeRaw = cells[2].toLowerCase();
+            if (!typeRaw.includes('buy') && !typeRaw.includes('sell')) return;
+
+            const volume = parseFloat(cells[3]);
+            const symbol = cells[4];
+            const entryPrice = parseFloat(cells[5]);
+            const sl = parseFloat(cells[6]) || 0;
+            const tp = parseFloat(cells[7]) || 0;
+            const exitPrice = parseFloat(cells[9]);
+            const commission = parseFloat(cells[10]) || 0;
+            const swap = parseFloat(cells[11]) || 0;
+            const profit = parseFloat(cells[12]);
+
+            if (!symbol || isNaN(volume) || isNaN(entryPrice) || isNaN(exitPrice) || isNaN(profit)) return;
+
+            const openTimeRaw = cells[1].replace(/\./g, '-');
+            const closeTimeRaw = cells[8].replace(/\./g, '-');
+
+            const openParts = openTimeRaw.split(' ');
+            const entryDate = openParts[0];
+            const entryTime = openParts[1] ? openParts[1].substring(0, 5) : '00:00';
+
+            parsedTrades.push({
+              pair: symbol.toUpperCase(),
+              direction: typeRaw.includes('buy') ? 'Buy' : 'Sell',
+              lotSize: volume,
+              entryPrice: entryPrice,
+              stopLoss: sl,
+              takeProfit: tp,
+              exitPrice: exitPrice,
+              commission: commission,
+              swap: swap,
+              pnl: profit,
+              date: entryDate,
+              time: entryTime,
+              notes: `Imported from MT5 HTML Report. Comment: ${cells[13] || ''}`,
+              reason: 'MT5 HTML Import',
+              logic: 'Imported trade history',
+              entryConfirmations: [],
+              emotion: 'Calm',
+              confidence: 5,
+              mistakes: [],
+              lessons: '',
+              improvement: '',
+              tags: ['mt5-import', 'html-upload'],
+              strategy: 'MT5 Import',
+              riskPct: 1,
+              rewardPct: 2,
+              mt5Ticket: ticket,
+              source: 'MT5 HTML'
+            });
+          }
+        });
+      } else {
+        // Parse CSV file
+        const lines = text.split('\n');
+        if (lines.length < 2) {
+          throw new Error('CSV file is empty or invalid.');
+        }
+
+        const headers = lines[0].toLowerCase().split(',').map(h => h.trim());
+        const idxPair = headers.indexOf('pair');
+        const idxSymbol = headers.indexOf('symbol');
+        const idxDirection = headers.indexOf('direction');
+        const idxType = headers.indexOf('type');
+        const idxLots = headers.indexOf('lot size');
+        const idxVolume = headers.indexOf('volume');
+        const idxEntryPrice = headers.indexOf('entry price');
+        const idxExitPrice = headers.indexOf('exit price');
+        const idxSL = headers.indexOf('stop loss');
+        const idxTP = headers.indexOf('take profit');
+        const idxPnL = headers.indexOf('pnl');
+        const idxProfit = headers.indexOf('profit');
+        const idxDate = headers.indexOf('date');
+        const idxTime = headers.indexOf('time');
+        const idxCommission = headers.indexOf('commission');
+        const idxSwap = headers.indexOf('swap');
+
+        for (let i = 1; i < lines.length; i++) {
+          if (!lines[i].trim()) continue;
+          const cells = lines[i].split(',').map(c => c.trim().replace(/^["']|["']$/g, ''));
+
+          const pairVal = cells[idxPair !== -1 ? idxPair : (idxSymbol !== -1 ? idxSymbol : 0)];
+          const directionVal = cells[idxDirection !== -1 ? idxDirection : (idxType !== -1 ? idxType : 1)];
+          const lotVal = parseFloat(cells[idxLots !== -1 ? idxLots : (idxVolume !== -1 ? idxVolume : 2)]);
+          const entryVal = parseFloat(cells[idxEntryPrice !== -1 ? idxEntryPrice : 3]);
+          const exitVal = parseFloat(cells[idxExitPrice !== -1 ? idxExitPrice : 4]);
+          const slVal = parseFloat(cells[idxSL !== -1 ? idxSL : -1]) || 0;
+          const tpVal = parseFloat(cells[idxTP !== -1 ? idxTP : -1]) || 0;
+          const pnlVal = parseFloat(cells[idxPnL !== -1 ? idxPnL : (idxProfit !== -1 ? idxProfit : -1)]) || 0;
+          const dateVal = cells[idxDate !== -1 ? idxDate : -1] || new Date().toISOString().split('T')[0];
+          const timeVal = cells[idxTime !== -1 ? idxTime : -1] || '00:00';
+          const commissionVal = parseFloat(cells[idxCommission !== -1 ? idxCommission : -1]) || 0;
+          const swapVal = parseFloat(cells[idxSwap !== -1 ? idxSwap : -1]) || 0;
+
+          if (pairVal && directionVal && !isNaN(lotVal) && !isNaN(entryVal) && !isNaN(exitVal)) {
+            parsedTrades.push({
+              pair: pairVal.toUpperCase(),
+              direction: directionVal.toLowerCase().includes('buy') ? 'Buy' : 'Sell',
+              lotSize: lotVal,
+              entryPrice: entryVal,
+              stopLoss: slVal,
+              takeProfit: tpVal,
+              exitPrice: exitVal,
+              commission: commissionVal,
+              swap: swapVal,
+              pnl: pnlVal,
+              date: dateVal,
+              time: timeVal,
+              notes: 'Imported from CSV File',
+              reason: 'CSV Import',
+              logic: 'Imported trade history',
+              entryConfirmations: [],
+              emotion: 'Calm',
+              confidence: 5,
+              mistakes: [],
+              lessons: '',
+              improvement: '',
+              tags: ['csv-import'],
+              strategy: 'CSV Import',
+              riskPct: 1,
+              rewardPct: 2,
+              source: 'CSV Upload'
+            });
+          }
+        }
+      }
+
+      if (parsedTrades.length === 0) {
+        throw new Error('No valid trades found in the file. Ensure the table columns or CSV headers match.');
+      }
+
+      const result = await bulkAddTrades(parsedTrades);
+      setImportFeedback(result);
+    } catch (err: any) {
+      console.error(err);
+      setImportError(err.message || 'Failed to process file');
+    } finally {
+      setImportingState(false);
+    }
+  };
+
   // --- DATA EXPORT ACTIONS ---
   
   // 1. EXPORT TO CSV
@@ -172,6 +348,13 @@ export default function Journal() {
           <div className="flex items-center gap-3 w-full sm:w-auto">
             {/* Export Menu */}
             <div className="flex items-center gap-2">
+              <button
+                onClick={() => setIsImportModalOpen(true)}
+                title="Import Trades (CSV/HTML)"
+                className="p-2.5 rounded-xl bg-slate-900 border border-slate-800 text-slate-400 hover:text-indigo-400 hover:border-indigo-500/20 transition-all cursor-pointer"
+              >
+                <Upload className="w-4 h-4" />
+              </button>
               <button
                 onClick={exportToCSV}
                 title="Export CSV"
@@ -693,6 +876,106 @@ export default function Journal() {
             </div>
           </div>
         )}
+      </Modal>
+
+      {/* --- BULK IMPORT MODAL --- */}
+      <Modal
+        isOpen={isImportModalOpen}
+        onClose={() => {
+          setIsImportModalOpen(false);
+          setImportError(null);
+          setImportFeedback(null);
+        }}
+        title="Import Trades (MetaTrader 5 / CSV)"
+        size="lg"
+      >
+        <div className="space-y-5 text-xs text-slate-350">
+          <div className="p-4 rounded-xl bg-indigo-500/5 border border-indigo-500/10 space-y-2">
+            <h4 className="font-bold text-slate-200 flex items-center gap-1.5 text-xs">
+              <Sparkles className="w-4 h-4 text-indigo-400" />
+              Easy Import via MT5 HTML Report (Recommended)
+            </h4>
+            <ol className="list-decimal pl-4 space-y-1 text-slate-400 leading-relaxed text-[10px]">
+              <li>Open your <strong>MetaTrader 5 (MT5)</strong> terminal.</li>
+              <li>Go to the <strong>History</strong> tab in the toolbox (Ctrl + T).</li>
+              <li>Right-click anywhere in your history list and select <strong>Report → HTML</strong>.</li>
+              <li>Save the HTML report file, then drop or select it here to import instantly!</li>
+            </ol>
+          </div>
+
+          {!importFeedback ? (
+            <div className="space-y-4">
+              <div className="relative group border-2 border-dashed border-slate-800 hover:border-indigo-500/50 rounded-2xl p-8 transition-all flex flex-col items-center justify-center text-center gap-3 bg-slate-950/30">
+                <input
+                  type="file"
+                  accept=".html,.htm,.csv"
+                  onChange={handleImportFile}
+                  disabled={importingState}
+                  className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
+                />
+                <div className="w-12 h-12 rounded-xl bg-slate-900 border border-slate-800 flex items-center justify-center text-slate-400 group-hover:text-indigo-400 transition-colors">
+                  <Upload className="w-6 h-6" />
+                </div>
+                <div>
+                  <p className="font-bold text-slate-200">
+                    {importingState ? 'Processing file...' : 'Choose file or drag here'}
+                  </p>
+                  <p className="text-[10px] text-slate-500 mt-1">Supports MT5 HTML Reports (.html) or custom CSV files (.csv)</p>
+                </div>
+                {importingState && (
+                  <div className="w-6 h-6 rounded-full border-2 border-indigo-500/20 border-t-indigo-500 animate-spin mt-2"></div>
+                )}
+              </div>
+
+              {importError && (
+                <div className="p-3.5 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-400 flex items-start gap-2.5">
+                  <AlertCircle className="w-4 h-4 text-rose-450 shrink-0 mt-0.5" />
+                  <p className="font-medium">{importError}</p>
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="space-y-4">
+              <div className="p-5 rounded-2xl bg-emerald-500/5 border border-emerald-500/20 text-center space-y-3">
+                <div className="w-12 h-12 rounded-full bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center mx-auto text-emerald-400">
+                  <Sparkles className="w-6 h-6 animate-pulse" />
+                </div>
+                <div className="space-y-1">
+                  <h4 className="font-extrabold text-slate-200 text-sm">Import Completed Successfully!</h4>
+                  <p className="text-slate-450">Your trade history has been updated in real-time.</p>
+                </div>
+                <div className="grid grid-cols-2 gap-4 max-w-xs mx-auto pt-2">
+                  <div className="p-3 rounded-xl bg-slate-950/60 border border-slate-900">
+                    <span className="text-[10px] text-slate-500 block uppercase font-bold">Imported</span>
+                    <span className="text-lg font-extrabold text-emerald-400">{importFeedback.imported}</span>
+                  </div>
+                  <div className="p-3 rounded-xl bg-slate-950/60 border border-slate-900">
+                    <span className="text-[10px] text-slate-500 block uppercase font-bold">Duplicates Skipped</span>
+                    <span className="text-lg font-extrabold text-slate-400">{importFeedback.skipped}</span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex justify-end">
+                <button
+                  onClick={() => {
+                    setIsImportModalOpen(false);
+                    setImportFeedback(null);
+                  }}
+                  className="py-2.5 px-6 rounded-xl bg-indigo-500 hover:bg-indigo-600 text-white font-bold transition-all cursor-pointer text-xs"
+                >
+                  View Journal
+                </button>
+              </div>
+            </div>
+          )}
+
+          <div className="pt-2 border-t border-slate-900/60 text-[10px] text-slate-500 font-medium leading-relaxed">
+            <p>
+              Note: Duplicate detection automatically screens incoming trades against existing entries using order tickets and signature pricing to keep your statistics clean.
+            </p>
+          </div>
+        </div>
       </Modal>
     </div>
   );
