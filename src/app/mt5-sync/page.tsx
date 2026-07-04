@@ -49,6 +49,13 @@ export default function MT5Sync() {
   const [error, setError] = useState('');
   const [copied, setCopied] = useState(false);
   const [showSetup, setShowSetup] = useState(false);
+  const [originUrl, setOriginUrl] = useState('http://localhost:3000');
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      setOriginUrl(window.location.origin);
+    }
+  }, []);
 
   useEffect(() => {
     if (!authLoading && !user) {
@@ -384,7 +391,7 @@ export default function MT5Sync() {
                       step: 2,
                       title: 'Enable WebRequest in MT5',
                       desc: 'Open MT5 → Tools → Options → Expert Advisors → Check "Allow WebRequest for listed URL" and add:',
-                      code: 'http://localhost:3000',
+                      code: originUrl,
                     },
                     {
                       step: 3,
