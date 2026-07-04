@@ -418,7 +418,7 @@ export default function MT5Sync() {
                         {
                           step: 2,
                           title: 'Enable WebRequest in MT5',
-                          desc: 'Open MT5 → Tools → Options → Expert Advisors → Check "Allow WebRequest for listed URL" and add your domain:',
+                          desc: 'Open MT5 → Tools → Options → Expert Advisors → Check "Allow WebRequest for listed URL" and add your domain (compatible with any broker like XM, and prop firms like Goat Funded Trader):',
                           code: originUrl,
                         },
                         {

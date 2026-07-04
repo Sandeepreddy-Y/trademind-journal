@@ -58,7 +58,7 @@ export interface UserSettings {
   tradingChecklist: string[];
   riskLimit?: number;
   defaultLotSize?: number;
-  brokerType?: 'oanda' | 'none';
+  brokerType?: 'oanda' | 'xm' | 'goat' | 'none';
   brokerApiKey?: string;
   brokerAccountId?: string;
   brokerEnvironment?: 'demo' | 'live';

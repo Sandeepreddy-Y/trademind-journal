@@ -18,7 +18,8 @@ import {
   DollarSign,
   User,
   LogOut,
-  FolderSync
+  FolderSync,
+  ExternalLink
 } from 'lucide-react';
 
 export default function Settings() {
@@ -37,7 +38,7 @@ export default function Settings() {
   const [newItem, setNewItem] = useState('');
 
   // Broker integration states
-  const [brokerType, setBrokerType] = useState<'oanda' | 'none'>('none');
+  const [brokerType, setBrokerType] = useState<'oanda' | 'xm' | 'goat' | 'none'>('none');
   const [brokerApiKey, setBrokerApiKey] = useState('');
   const [brokerAccountId, setBrokerAccountId] = useState('');
   const [brokerEnvironment, setBrokerEnvironment] = useState<'demo' | 'live'>('demo');
@@ -419,14 +420,35 @@ export default function Settings() {
                   <label className="text-[9px] uppercase tracking-wider font-semibold text-slate-500">Broker Provider</label>
                   <select
                     value={brokerType}
-                    onChange={(e) => setBrokerType(e.target.value as 'oanda' | 'none')}
+                    onChange={(e) => setBrokerType(e.target.value as 'oanda' | 'xm' | 'goat' | 'none')}
                     disabled={brokerConnected}
                     className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950/60 border border-slate-900 focus:outline-none focus:border-indigo-500/40 text-slate-200"
                   >
                     <option value="none">Not Connected</option>
+                    <option value="xm">XM Broker (via MT5 EA)</option>
+                    <option value="goat">Goat Funded Trader (via MT5 EA)</option>
                     <option value="oanda">OANDA (REST API)</option>
                   </select>
                 </div>
+
+                {(brokerType === 'xm' || brokerType === 'goat') && (
+                  <div className="p-4 rounded-xl bg-indigo-500/5 border border-indigo-500/20 text-slate-350 space-y-3">
+                    <p className="leading-relaxed">
+                      Since <strong>{brokerType === 'xm' ? 'XM Broker' : 'Goat Funded Trader'}</strong> accounts operate on MT5 terminal servers, they sync in real-time via the TradeMind Expert Advisor (EA) running inside your terminal.
+                    </p>
+                    <p className="text-[10px] text-slate-550 leading-relaxed">
+                      Set up your EA by dragging it to any active chart, configure your unique User API Key, and closed trades will automatically upload instantly to your dashboard.
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => router.push('/mt5-sync')}
+                      className="py-2 px-4 rounded-xl bg-indigo-500 hover:bg-indigo-600 text-white font-bold text-[10px] transition-all cursor-pointer inline-flex items-center gap-1"
+                    >
+                      Go to MT5 EA Sync Settings
+                      <ExternalLink className="w-3 h-3" />
+                    </button>
+                  </div>
+                )}
 
                 {brokerType === 'oanda' && (
                   <>
@@ -476,7 +498,7 @@ export default function Settings() {
                   </>
                 )}
 
-                {brokerType !== 'none' && (
+                {brokerType === 'oanda' && (
                   <div className="pt-2 flex flex-wrap gap-3">
                     {!brokerConnected ? (
                       <button
@@ -513,7 +535,7 @@ export default function Settings() {
               </form>
 
               {/* Status information */}
-              {brokerConnected && (
+              {brokerConnected && brokerType === 'oanda' && (
                 <div className="mt-5 pt-4 border-t border-slate-900/60 flex flex-col gap-2 text-[10px] text-slate-500 font-medium">
                   <div className="flex justify-between">
                     <span>Sync Status</span>
@@ -526,6 +548,31 @@ export default function Settings() {
                   <div className="flex justify-between">
                     <span>Last Sync Execution</span>
                     <span>{brokerLastSync ? new Date(brokerLastSync).toLocaleString() : 'Never'}</span>
+                  </div>
+                </div>
+              )}
+
+              {(brokerType === 'xm' || brokerType === 'goat') && (
+                <div className="mt-5 pt-4 border-t border-slate-900/60 flex flex-col gap-2 text-[10px] text-slate-500 font-medium">
+                  <div className="flex justify-between items-center">
+                    <span>Sync Status</span>
+                    <span className="text-emerald-400 font-bold flex items-center gap-1.5">
+                      <span className="relative flex h-2 w-2">
+                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                        <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                      </span>
+                      Listening for MT5 Trades
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Selected Broker</span>
+                    <span className="text-slate-300 font-semibold">
+                      {brokerType === 'xm' ? 'XM Broker' : 'Goat Funded Trader'}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Connection Mechanism</span>
+                    <span>MetaTrader 5 Expert Advisor</span>
                   </div>
                 </div>
               )}

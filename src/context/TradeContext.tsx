@@ -29,7 +29,7 @@ interface TradeContextType {
   deleteGoal: (goalId: string) => Promise<void>;
   importMT5Trades: () => Promise<{ imported: number; skipped: number }>;
   syncBrokerTrades: (
-    brokerType: 'oanda' | 'none',
+    brokerType: 'oanda' | 'xm' | 'goat' | 'none',
     apiKey: string,
     accountId: string,
     environment: 'demo' | 'live'
@@ -323,7 +323,7 @@ export const TradeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   };
 
   const syncBrokerTrades = async (
-    brokerType: 'oanda' | 'none',
+    brokerType: 'oanda' | 'xm' | 'goat' | 'none',
     apiKey: string,
     accountId: string,
     environment: 'demo' | 'live'
