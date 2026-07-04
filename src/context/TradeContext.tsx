@@ -28,6 +28,12 @@ interface TradeContextType {
   updateGoal: (goalId: string, updatedFields: Partial<TradingGoal>) => Promise<void>;
   deleteGoal: (goalId: string) => Promise<void>;
   importMT5Trades: () => Promise<{ imported: number; skipped: number }>;
+  syncBrokerTrades: (
+    brokerType: 'oanda' | 'none',
+    apiKey: string,
+    accountId: string,
+    environment: 'demo' | 'live'
+  ) => Promise<{ count: number }>;
 }
 
 const TradeContext = createContext<TradeContextType | undefined>(undefined);
@@ -316,6 +322,68 @@ export const TradeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     return { imported, skipped };
   };
 
+  const syncBrokerTrades = async (
+    brokerType: 'oanda' | 'none',
+    apiKey: string,
+    accountId: string,
+    environment: 'demo' | 'live'
+  ): Promise<{ count: number }> => {
+    if (!user) throw new Error('Authentication required');
+
+    const res = await fetch('/api/broker/sync', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        userId: user.uid,
+        brokerApiKey: apiKey,
+        brokerAccountId: accountId,
+        brokerEnvironment: environment,
+      }),
+    });
+
+    if (!res.ok) {
+      const errData = await res.json();
+      throw new Error(errData.error || 'Failed to sync broker trades');
+    }
+
+    const data = await res.json();
+
+    // Save locally on client if LocalStorage mode is fallback
+    const existingIds = new Set(trades.map((t) => t.id));
+    let localSaved = false;
+
+    if (data.trades && data.trades.length > 0) {
+      for (const trade of data.trades) {
+        if (!existingIds.has(trade.id)) {
+          await dbService.saveTrade(trade);
+          localSaved = true;
+        }
+      }
+    }
+
+    // Refresh trades
+    const updatedTrades = await dbService.getTrades(user.uid);
+    setTrades(updatedTrades);
+
+    // Save sync info to settings
+    if (settings) {
+      const updatedSettings: UserSettings = {
+        ...settings,
+        brokerType,
+        brokerApiKey: apiKey,
+        brokerAccountId: accountId,
+        brokerEnvironment: environment,
+        brokerConnected: true,
+        brokerLastSync: Date.now(),
+      };
+      await updateSettings(updatedSettings);
+    }
+
+    return { count: data.count };
+  };
+
   return (
     <TradeContext.Provider
       value={{
@@ -331,6 +399,7 @@ export const TradeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         updateGoal,
         deleteGoal,
         importMT5Trades,
+        syncBrokerTrades,
       }}
     >
       {children}

@@ -4,6 +4,7 @@ import React, { useEffect, useState } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { useTrades } from '../../context/TradeContext';
 import { useRouter } from 'next/navigation';
+import { UserSettings } from '../../types';
 import Sidebar from '../../components/layout/Sidebar';
 import Card from '../../components/ui/Card';
 import { 
@@ -22,7 +23,7 @@ import {
 
 export default function Settings() {
   const { user, logout, loading: authLoading } = useAuth();
-  const { settings, updateSettings, loading: tradesLoading } = useTrades();
+  const { settings, updateSettings, syncBrokerTrades, loading: tradesLoading } = useTrades();
   const router = useRouter();
 
   // Core settings form state
@@ -34,6 +35,18 @@ export default function Settings() {
   
   // Custom checklist item input state
   const [newItem, setNewItem] = useState('');
+
+  // Broker integration states
+  const [brokerType, setBrokerType] = useState<'oanda' | 'none'>('none');
+  const [brokerApiKey, setBrokerApiKey] = useState('');
+  const [brokerAccountId, setBrokerAccountId] = useState('');
+  const [brokerEnvironment, setBrokerEnvironment] = useState<'demo' | 'live'>('demo');
+  const [brokerConnected, setBrokerConnected] = useState(false);
+  const [brokerLastSync, setBrokerLastSync] = useState<number | null>(null);
+
+  const [syncingBroker, setSyncingBroker] = useState(false);
+  const [brokerError, setBrokerError] = useState('');
+  const [brokerSuccess, setBrokerSuccess] = useState('');
 
   const [saving, setSaving] = useState(false);
   const [successMsg, setSuccessMsg] = useState('');
@@ -52,6 +65,12 @@ export default function Settings() {
       setRiskLimit(settings.riskLimit || 2.0);
       setDefaultLotSize(settings.defaultLotSize || 0.1);
       setChecklist(settings.tradingChecklist || []);
+      setBrokerType(settings.brokerType || 'none');
+      setBrokerApiKey(settings.brokerApiKey || '');
+      setBrokerAccountId(settings.brokerAccountId || '');
+      setBrokerEnvironment(settings.brokerEnvironment || 'demo');
+      setBrokerConnected(settings.brokerConnected || false);
+      setBrokerLastSync(settings.brokerLastSync || null);
     }
   }, [settings]);
 
@@ -88,7 +107,13 @@ export default function Settings() {
             timezone,
             riskLimit: Number(riskLimit),
             defaultLotSize: Number(defaultLotSize),
-            tradingChecklist: checklist
+            tradingChecklist: checklist,
+            brokerType,
+            brokerApiKey,
+            brokerAccountId,
+            brokerEnvironment,
+            brokerConnected,
+            brokerLastSync: brokerLastSync || undefined
           }
         : {
             currency,
@@ -100,7 +125,13 @@ export default function Settings() {
             riskRules: '',
             riskLimit: Number(riskLimit),
             defaultLotSize: Number(defaultLotSize),
-            tradingChecklist: checklist
+            tradingChecklist: checklist,
+            brokerType,
+            brokerApiKey,
+            brokerAccountId,
+            brokerEnvironment,
+            brokerConnected,
+            brokerLastSync: brokerLastSync || undefined
           };
 
       await updateSettings(mergedSettings);
@@ -110,6 +141,83 @@ export default function Settings() {
       console.error(e);
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleBrokerConnect = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!brokerApiKey || !brokerAccountId) {
+      setBrokerError('Please provide both an API Key and Account ID.');
+      return;
+    }
+
+    setSyncingBroker(true);
+    setBrokerError('');
+    setBrokerSuccess('');
+
+    try {
+      const result = await syncBrokerTrades(
+        brokerType,
+        brokerApiKey,
+        brokerAccountId,
+        brokerEnvironment
+      );
+      setBrokerConnected(true);
+      setBrokerSuccess(`Successfully connected! Imported ${result.count} closed trades.`);
+    } catch (err: any) {
+      setBrokerError(err.message || 'Failed to authenticate and sync with OANDA.');
+    } finally {
+      setSyncingBroker(false);
+    }
+  };
+
+  const handleBrokerDisconnect = async () => {
+    setSyncingBroker(true);
+    setBrokerError('');
+    setBrokerSuccess('');
+
+    try {
+      const mergedSettings: UserSettings = {
+        ...settings!,
+        brokerType: 'none',
+        brokerApiKey: '',
+        brokerAccountId: '',
+        brokerEnvironment: 'demo',
+        brokerConnected: false,
+        brokerLastSync: undefined,
+      };
+      await updateSettings(mergedSettings);
+      setBrokerType('none');
+      setBrokerApiKey('');
+      setBrokerAccountId('');
+      setBrokerConnected(false);
+      setBrokerLastSync(null);
+      setBrokerSuccess('Broker disconnected successfully.');
+    } catch (err: any) {
+      setBrokerError(err.message || 'Failed to disconnect broker.');
+    } finally {
+      setSyncingBroker(false);
+    }
+  };
+
+  const handleBrokerSync = async () => {
+    setSyncingBroker(true);
+    setBrokerError('');
+    setBrokerSuccess('');
+
+    try {
+      const result = await syncBrokerTrades(
+        brokerType,
+        brokerApiKey,
+        brokerAccountId,
+        brokerEnvironment
+      );
+      setBrokerSuccess(`Sync successful! Synced ${result.count} trades.`);
+      setBrokerLastSync(Date.now());
+    } catch (err: any) {
+      setBrokerError(err.message || 'Failed to sync with broker.');
+    } finally {
+      setSyncingBroker(false);
     }
   };
 
@@ -284,6 +392,143 @@ export default function Settings() {
                   </div>
                 ))}
               </div>
+            </Card>
+
+            {/* Broker Connection Card */}
+            <Card>
+              <h4 className="text-sm font-bold text-slate-200 flex items-center gap-1.5 mb-1">
+                <FolderSync className="w-4.5 h-4.5 text-indigo-400" />
+                Broker Integration
+              </h4>
+              <p className="text-[10px] text-slate-500 mb-5">Connect directly to your broker REST API to sync trades automatically</p>
+
+              {brokerError && (
+                <div className="p-3.5 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-400 text-xs font-semibold mb-4">
+                  {brokerError}
+                </div>
+              )}
+              {brokerSuccess && (
+                <div className="p-3.5 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-xs font-semibold mb-4">
+                  {brokerSuccess}
+                </div>
+              )}
+
+              <form onSubmit={handleBrokerConnect} className="space-y-4 text-xs">
+                {/* Select Broker */}
+                <div className="space-y-1">
+                  <label className="text-[9px] uppercase tracking-wider font-semibold text-slate-500">Broker Provider</label>
+                  <select
+                    value={brokerType}
+                    onChange={(e) => setBrokerType(e.target.value as 'oanda' | 'none')}
+                    disabled={brokerConnected}
+                    className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950/60 border border-slate-900 focus:outline-none focus:border-indigo-500/40 text-slate-200"
+                  >
+                    <option value="none">Not Connected</option>
+                    <option value="oanda">OANDA (REST API)</option>
+                  </select>
+                </div>
+
+                {brokerType === 'oanda' && (
+                  <>
+                    <div className="grid grid-cols-2 gap-4">
+                      {/* Environment */}
+                      <div className="space-y-1">
+                        <label className="text-[9px] uppercase tracking-wider font-semibold text-slate-500">Account Type</label>
+                        <select
+                          value={brokerEnvironment}
+                          onChange={(e) => setBrokerEnvironment(e.target.value as 'demo' | 'live')}
+                          disabled={brokerConnected}
+                          className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950/60 border border-slate-900 focus:outline-none focus:border-indigo-500/40 text-slate-200"
+                        >
+                          <option value="demo">Practice (Sandbox)</option>
+                          <option value="live">Live (Production)</option>
+                        </select>
+                      </div>
+
+                      {/* Account ID */}
+                      <div className="space-y-1">
+                        <label className="text-[9px] uppercase tracking-wider font-semibold text-slate-500">Account ID</label>
+                        <input
+                          type="text"
+                          required
+                          placeholder="e.g. 101-002-1234567-001"
+                          value={brokerAccountId}
+                          onChange={(e) => setBrokerAccountId(e.target.value)}
+                          disabled={brokerConnected}
+                          className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950/60 border border-slate-900 focus:outline-none focus:border-indigo-500/40 text-slate-200"
+                        />
+                      </div>
+                    </div>
+
+                    {/* API Key / Token */}
+                    <div className="space-y-1">
+                      <label className="text-[9px] uppercase tracking-wider font-semibold text-slate-500">Personal Access Token (API Key)</label>
+                      <input
+                        type="password"
+                        required
+                        placeholder={brokerConnected ? "••••••••••••••••••••" : "Paste your OANDA token here"}
+                        value={brokerApiKey}
+                        onChange={(e) => setBrokerApiKey(e.target.value)}
+                        disabled={brokerConnected}
+                        className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950/60 border border-slate-900 focus:outline-none focus:border-indigo-500/40 text-slate-200 font-mono"
+                      />
+                    </div>
+                  </>
+                )}
+
+                {brokerType !== 'none' && (
+                  <div className="pt-2 flex flex-wrap gap-3">
+                    {!brokerConnected ? (
+                      <button
+                        type="submit"
+                        disabled={syncingBroker}
+                        className="py-2.5 px-5 rounded-xl bg-indigo-500 hover:bg-indigo-600 text-white font-bold transition-all flex items-center gap-2 cursor-pointer"
+                      >
+                        {syncingBroker && <div className="w-3.5 h-3.5 rounded-full border-2 border-white/20 border-t-white animate-spin"></div>}
+                        Connect & Import historical trades
+                      </button>
+                    ) : (
+                      <>
+                        <button
+                          type="button"
+                          onClick={handleBrokerSync}
+                          disabled={syncingBroker}
+                          className="py-2.5 px-5 rounded-xl bg-slate-900 border border-slate-800 text-slate-200 hover:text-white font-bold transition-all flex items-center gap-2 cursor-pointer"
+                        >
+                          {syncingBroker && <div className="w-3.5 h-3.5 rounded-full border-2 border-indigo-500/20 border-t-indigo-500 animate-spin"></div>}
+                          Sync Trades Now
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleBrokerDisconnect}
+                          disabled={syncingBroker}
+                          className="py-2.5 px-5 rounded-xl bg-rose-500/10 hover:bg-rose-500/15 border border-rose-500/20 text-rose-450 font-bold transition-all cursor-pointer"
+                        >
+                          Disconnect
+                        </button>
+                      </>
+                    )}
+                  </div>
+                )}
+              </form>
+
+              {/* Status information */}
+              {brokerConnected && (
+                <div className="mt-5 pt-4 border-t border-slate-900/60 flex flex-col gap-2 text-[10px] text-slate-500 font-medium">
+                  <div className="flex justify-between">
+                    <span>Sync Status</span>
+                    <span className="text-emerald-450 font-bold">Connected (REST API)</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Broker Name</span>
+                    <span className="text-slate-350">OANDA ({brokerEnvironment === 'live' ? 'Live' : 'Practice'})</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Last Sync Execution</span>
+                    <span>{brokerLastSync ? new Date(brokerLastSync).toLocaleString() : 'Never'}</span>
+                  </div>
+                </div>
+              )}
             </Card>
 
           </div>

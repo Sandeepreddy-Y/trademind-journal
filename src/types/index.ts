@@ -58,6 +58,12 @@ export interface UserSettings {
   tradingChecklist: string[];
   riskLimit?: number;
   defaultLotSize?: number;
+  brokerType?: 'oanda' | 'none';
+  brokerApiKey?: string;
+  brokerAccountId?: string;
+  brokerEnvironment?: 'demo' | 'live';
+  brokerConnected?: boolean;
+  brokerLastSync?: number;
 }
 
 export interface AIAnalysisReport {
