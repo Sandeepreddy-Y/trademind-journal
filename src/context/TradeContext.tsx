@@ -70,6 +70,75 @@ export const TradeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     loadUserData();
   }, [user]);
 
+  // Silent background polling to fetch any real-time MT5 EA trades (especially useful in Local Mode)
+  useEffect(() => {
+    if (!user) return;
+
+    const pollInterval = setInterval(async () => {
+      try {
+        const res = await fetch(`/api/mt5/trades?userId=${user.uid}`);
+        const data = await res.json();
+        
+        if (data.trades && data.trades.length > 0) {
+          console.log(`[TradeContext] Background polling detected ${data.trades.length} new EA trades. Auto-importing...`);
+          
+          const existingTradesMap = new Map(trades.map((t) => [t.id, t]));
+          let updated = false;
+
+          for (const mt5Trade of data.trades) {
+            const existing = existingTradesMap.get(mt5Trade.id);
+            if (existing) {
+              const isExistingOpen = existing.status === 'Open';
+              const isNewOpen = mt5Trade.status === 'Open';
+              const pnlChanged = existing.pnl !== mt5Trade.pnl;
+              const exitPriceChanged = existing.exitPrice !== mt5Trade.exitPrice;
+
+              const shouldUpdate = isExistingOpen && (!isNewOpen || pnlChanged || exitPriceChanged);
+              if (!shouldUpdate) continue;
+            }
+
+            // Construct and preserve manual fields
+            const trade: Trade = {
+              ...mt5Trade,
+              userId: user.uid,
+              stopLoss: existing?.stopLoss || mt5Trade.stopLoss || 0,
+              takeProfit: existing?.takeProfit || mt5Trade.takeProfit || 0,
+              riskPct: existing?.riskPct || mt5Trade.riskPct || 0,
+              rewardPct: existing?.rewardPct || mt5Trade.rewardPct || 0,
+              notes: existing?.notes || mt5Trade.notes,
+              reason: existing?.reason || mt5Trade.reason || 'MT5 Auto Import',
+              logic: existing?.logic || mt5Trade.logic || '',
+              entryConfirmations: existing?.entryConfirmations || mt5Trade.entryConfirmations || [],
+              emotion: existing?.emotion || mt5Trade.emotion || '',
+              confidence: existing?.confidence || mt5Trade.confidence || 5,
+              mistakes: existing?.mistakes || mt5Trade.mistakes || [],
+              lessons: existing?.lessons || mt5Trade.lessons || '',
+              improvement: existing?.improvement || mt5Trade.improvement || '',
+              tags: existing?.tags || mt5Trade.tags || ['mt5-import', 'real-time'],
+              strategy: existing?.strategy || mt5Trade.strategy || 'MT5 Sync',
+            };
+
+            await dbService.saveTrade(trade);
+            updated = true;
+          }
+
+          if (updated) {
+            // Reload all trades to update dashboard in real-time
+            const refreshed = await dbService.getTrades(user.uid);
+            setTrades(refreshed);
+          }
+
+          // Clear buffer
+          await fetch(`/api/mt5/trades?userId=${user.uid}`, { method: 'DELETE' });
+        }
+      } catch (err) {
+        console.error('[TradeContext] Failed to background poll EA trades:', err);
+      }
+    }, 8000); // Check every 8 seconds
+
+    return () => clearInterval(pollInterval);
+  }, [user, trades]);
+
   const addTrade = async (
     tradeData: Omit<Trade, 'id' | 'userId' | 'day' | 'week' | 'month' | 'year' | 'session' | 'holdingTime' | 'rr' | 'pnl' | 'status' | 'createdAt'>,
     exitDate: string,

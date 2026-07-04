@@ -39,6 +39,12 @@ export interface Trade {
   tags: string[];
   strategy: string;
   createdAt: number;
+  source?: string;
+  mt5Ticket?: number;
+  mt5PositionId?: number;
+  accountNumber?: number;
+  brokerName?: string;
+  serverName?: string;
 }
 
 export interface UserSettings {
