@@ -2,13 +2,8 @@
 
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { 
-  signInWithEmailAndPassword,
-  createUserWithEmailAndPassword,
-  signOut,
-  sendPasswordResetEmail,
   signInWithPopup,
   GoogleAuthProvider,
-  updateProfile,
   onAuthStateChanged
 } from 'firebase/auth';
 import { auth, isFirebaseEnabled } from '../lib/firebase';
@@ -37,142 +32,199 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [loading, setLoading] = useState(true);
-  const [isLocalMode, setIsLocalMode] = useState(!isFirebaseEnabled);
+  const [isLocalMode, setIsLocalMode] = useState(false);
 
+  // Initialize: Load user profile from REST API using stored JWT token
   useEffect(() => {
-    if (isFirebaseEnabled && auth) {
-      const unsubscribe = onAuthStateChanged(auth, (firebaseUser) => {
-        if (firebaseUser) {
-          setUser({
-            uid: firebaseUser.uid,
-            email: firebaseUser.email,
-            displayName: firebaseUser.displayName,
-            photoURL: firebaseUser.photoURL,
-          });
-          setIsLocalMode(false);
-        } else {
-          setUser(null);
-        }
+    const initializeAuth = async () => {
+      const token = typeof window !== 'undefined' ? localStorage.getItem('trademind_token') : null;
+      
+      if (!token) {
+        setUser(null);
         setLoading(false);
-      });
-      return unsubscribe;
-    } else {
-      // LocalStorage Auth Fallback
-      if (typeof window !== 'undefined') {
-        const storedUser = localStorage.getItem('trademind_user');
-        if (storedUser) {
-          try {
-            setUser(JSON.parse(storedUser));
-          } catch {
+        return;
+      }
+
+      try {
+        const res = await fetch('/api/auth/me', {
+          headers: {
+            'Authorization': `Bearer ${token}`
+          }
+        });
+
+        if (res.ok) {
+          const data = await res.json();
+          if (data.success && data.user) {
+            setUser({
+              uid: data.user.id,
+              email: data.user.email,
+              displayName: data.user.name,
+              photoURL: data.user.avatar,
+            });
+          } else {
+            localStorage.removeItem('trademind_token');
             setUser(null);
           }
+        } else {
+          localStorage.removeItem('trademind_token');
+          setUser(null);
         }
+      } catch (err) {
+        console.error('Failed to restore auth session:', err);
+        // Do not delete token on network error to allow retries, but stop loading
+      } finally {
+        setLoading(false);
       }
-      setLoading(false);
-    }
+    };
+
+    initializeAuth();
   }, []);
 
   const login = async (email: string, password: string) => {
-    if (isFirebaseEnabled && auth) {
-      await signInWithEmailAndPassword(auth, email, password);
-      return;
-    }
-
-    // Local Mode simulation
     setLoading(true);
-    await new Promise((resolve) => setTimeout(resolve, 800)); // Simulate API delay
-    const mockUser: AuthUser = {
-      uid: 'local-trader-id',
-      email: email,
-      displayName: email.split('@')[0].toUpperCase(),
-    };
-    setUser(mockUser);
-    localStorage.setItem('trademind_user', JSON.stringify(mockUser));
-    setLoading(false);
+    try {
+      const res = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password }),
+      });
+
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || 'Login failed');
+      }
+
+      localStorage.setItem('trademind_token', data.token);
+      setUser({
+        uid: data.user.id,
+        email: data.user.email,
+        displayName: data.user.name,
+        photoURL: data.user.avatar,
+      });
+    } finally {
+      setLoading(false);
+    }
   };
 
   const signup = async (email: string, password: string, name: string) => {
-    if (isFirebaseEnabled && auth) {
-      const credential = await createUserWithEmailAndPassword(auth, email, password);
-      await updateProfile(credential.user, { displayName: name });
-      setUser({
-        uid: credential.user.uid,
-        email: credential.user.email,
-        displayName: name,
-      });
-      return;
-    }
-
-    // Local Mode simulation
     setLoading(true);
-    await new Promise((resolve) => setTimeout(resolve, 800));
-    const mockUser: AuthUser = {
-      uid: 'local-trader-id',
-      email: email,
-      displayName: name,
-    };
-    setUser(mockUser);
-    localStorage.setItem('trademind_user', JSON.stringify(mockUser));
-    setLoading(false);
+    try {
+      const res = await fetch('/api/auth/register', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password, name }),
+      });
+
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || 'Registration failed');
+      }
+
+      localStorage.setItem('trademind_token', data.token);
+      setUser({
+        uid: data.user.id,
+        email: data.user.email,
+        displayName: data.user.name,
+        photoURL: data.user.avatar,
+      });
+    } finally {
+      setLoading(false);
+    }
   };
 
   const loginWithGoogle = async () => {
-    if (isFirebaseEnabled && auth) {
-      const provider = new GoogleAuthProvider();
-      await signInWithPopup(auth, provider);
-      return;
-    }
-
-    // Local Mode simulation
     setLoading(true);
-    await new Promise((resolve) => setTimeout(resolve, 1000));
-    const mockUser: AuthUser = {
-      uid: 'google-local-trader',
-      email: 'trader.joe@gmail.com',
-      displayName: 'Trader Joe',
-      photoURL: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100&h=100&fit=crop&crop=face',
-    };
-    setUser(mockUser);
-    localStorage.setItem('trademind_user', JSON.stringify(mockUser));
-    setLoading(false);
+    try {
+      let email = 'google.trader@example.com';
+      let name = 'Google Trader';
+      let avatar = '';
+
+      // If Firebase is enabled, we can use it to get the Google credentials, then exchange for backend JWT
+      if (isFirebaseEnabled && auth) {
+        const provider = new GoogleAuthProvider();
+        const credential = await signInWithPopup(auth, provider);
+        if (credential.user) {
+          email = credential.user.email || email;
+          name = credential.user.displayName || name;
+          avatar = credential.user.photoURL || avatar;
+        }
+      } else {
+        // Mock Google login in local/custom auth mode
+        await new Promise((resolve) => setTimeout(resolve, 800));
+      }
+
+      // Upsert user via backend login endpoint
+      const res = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          provider: 'google',
+          email,
+          name,
+          avatar
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || 'Google login failed');
+      }
+
+      localStorage.setItem('trademind_token', data.token);
+      setUser({
+        uid: data.user.id,
+        email: data.user.email,
+        displayName: data.user.name,
+        photoURL: data.user.avatar,
+      });
+    } finally {
+      setLoading(false);
+    }
   };
 
   const logout = async () => {
-    if (isFirebaseEnabled && auth) {
-      await signOut(auth);
+    setLoading(true);
+    try {
+      const token = localStorage.getItem('trademind_token');
+      if (token) {
+        await fetch('/api/auth/me', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${token}`
+          }
+        });
+      }
+    } catch (err) {
+      console.error('Logout error on server:', err);
+    } finally {
+      localStorage.removeItem('trademind_token');
       setUser(null);
-      return;
+      setLoading(false);
     }
-
-    // Local Mode
-    localStorage.removeItem('trademind_user');
-    setUser(null);
   };
 
   const resetPassword = async (email: string) => {
-    if (isFirebaseEnabled && auth) {
-      await sendPasswordResetEmail(auth, email);
-      return;
+    setLoading(true);
+    try {
+      const res = await fetch('/api/auth/forgot-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || 'Reset password request failed');
+      }
+    } finally {
+      setLoading(false);
     }
-
-    // Local Mode
-    await new Promise((resolve) => setTimeout(resolve, 500));
-    console.log(`Simulated reset password link sent to: ${email}`);
   };
 
   const updateDisplayName = async (name: string) => {
-    if (isFirebaseEnabled && auth && auth.currentUser) {
-      await updateProfile(auth.currentUser, { displayName: name });
-      setUser(prev => prev ? { ...prev, displayName: name } : null);
-      return;
-    }
-
-    // Local Mode
-    if (user) {
-      const updated = { ...user, displayName: name };
-      setUser(updated);
-      localStorage.setItem('trademind_user', JSON.stringify(updated));
-    }
+    if (!user) throw new Error('Authentication required');
+    
+    // We can update locally first, and in production this would call an API
+    setUser(prev => prev ? { ...prev, displayName: name } : null);
   };
 
   return (

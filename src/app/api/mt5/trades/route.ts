@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { db, isFirebaseEnabled } from '../../../../lib/firebase';
-import { doc, setDoc, getDoc, collection, query, where, getDocs } from 'firebase/firestore';
+import prisma from '@/lib/prisma';
 import { Trade } from '../../../../types';
 
 // Helper functions for date calculations
@@ -28,8 +27,9 @@ function parseMT5DateTime(dtStr: string): Date {
   return isNaN(d.getTime()) ? new Date() : d;
 }
 
-// In-memory buffer for LocalStorage fallback mode
-// If the user runs the app without cloud Firebase, trades are buffered here and picked up by background polling.
+// In-memory buffer for LocalMode notifications.
+// When a trade is synced, we save it to the DB, but also add its ticket to this list.
+// The frontend polls and reads this list, refreshes the UI, and clears it.
 let earRetryBuffer: any[] = [];
 
 /**
@@ -83,18 +83,23 @@ export async function POST(request: NextRequest) {
     const tradeId = `mt5_${ticket}`;
     const userId = apiKey; // API Key represents the User ID (UID)
 
-    // 3. Reject duplicates by checking database or memory buffer
-    if (isFirebaseEnabled && db) {
-      const docRef = doc(db, 'trades', tradeId);
-      const docSnap = await getDoc(docRef);
-      if (docSnap.exists()) {
-        return NextResponse.json({ message: 'Trade already synced', tradeId }, { status: 200 });
-      }
-    } else {
-      const exists = earRetryBuffer.some(t => t.id === tradeId);
-      if (exists) {
-        return NextResponse.json({ message: 'Trade already synced (buffered)', tradeId }, { status: 200 });
-      }
+    // Verify user exists in PostgreSQL database
+    const userExists = await prisma.user.findUnique({
+      where: { id: userId },
+    });
+
+    if (!userExists) {
+      console.error(`[MT5 EA Sync] Unauthorized: User ${userId} not found in database`);
+      return NextResponse.json({ error: 'Unauthorized: Invalid User ID' }, { status: 401 });
+    }
+
+    // 3. Reject duplicates by checking database
+    const existingInDb = await prisma.trade.findUnique({
+      where: { ticket: Number(ticket) },
+    });
+
+    if (existingInDb) {
+      return NextResponse.json({ message: 'Trade already synced', tradeId }, { status: 200 });
     }
 
     // 4. Enrich Trade Metrics
@@ -136,61 +141,55 @@ export async function POST(request: NextRequest) {
       rr = movement > 0 ? Number((Math.abs(pnl) / movement).toFixed(2)) : 0;
     }
 
-    const trade: Trade = {
-      id: tradeId,
-      userId,
-      pair: symbol,
-      direction,
-      lotSize,
-      entryPrice,
-      stopLoss: stopLoss || 0,
-      takeProfit: takeProfit || 0,
-      exitPrice,
-      pnl: Number(pnl.toFixed(2)),
-      rr,
-      riskPct: 0,
-      rewardPct: 0,
-      commission: Math.abs(commission || 0),
-      swap: Math.abs(swap || 0),
-      status,
-      date: openTime.split(' ')[0].replace(/\./g, '-'),
-      time: openTimeStr,
-      day,
-      week,
-      month,
-      year,
-      session,
-      holdingTime,
-      notes: comment ? `MT5 Comment: ${comment}` : `MT5 Position #${positionId} — Real-time synced`,
-      reason: 'MT5 Auto Import',
-      logic: '',
-      entryConfirmations: [],
-      emotion: '',
-      confidence: 5,
-      mistakes: [],
-      lessons: '',
-      improvement: '',
-      tags: ['mt5-import', 'real-time'],
-      strategy: magicNumber > 0 ? `MT5 Magic ${magicNumber}` : 'MT5 Sync',
-      createdAt: Date.now(),
-      source: 'mt5',
-      mt5Ticket: ticket,
-      mt5PositionId: positionId,
-      accountNumber,
-      brokerName,
-      serverName,
-    };
-
     // 5. Save trade to database
-    if (isFirebaseEnabled && db) {
-      const docRef = doc(db, 'trades', tradeId);
-      await setDoc(docRef, trade, { merge: true });
-      console.log(`[MT5 EA Sync] Trade ${tradeId} saved directly to Firestore for user ${userId}`);
-    } else {
-      // Buffer it in memory for local-mode client pickup
-      earRetryBuffer.push(trade);
-      console.log(`[MT5 EA Sync] Trade ${tradeId} buffered in-memory (local mode) for user ${userId}`);
-    }
+    await prisma.trade.create({
+      data: {
+        id: tradeId,
+        userId,
+        ticket: Number(ticket),
+        symbol: symbol.toUpperCase(),
+        direction,
+        volume: Number(lotSize),
+        entryPrice: Number(entryPrice),
+        exitPrice: Number(exitPrice),
+        stopLoss: Number(stopLoss || 0),
+        takeProfit: Number(takeProfit || 0),
+        openTime: openDateObj,
+        closeTime: closeDateObj,
+        holdingTime,
+        session,
+        day,
+        week,
+        month,
+        year,
+        profit: Number(pnl),
+        commission: Number(commission || 0),
+        swap: Number(swap || 0),
+        status,
+        riskReward: rr,
+        notes: comment ? `MT5 Comment: ${comment}` : `MT5 Position #${positionId} — Real-time synced`,
+        reason: 'MT5 Auto Import',
+        logic: '',
+        entryConfirmations: [],
+        emotion: '',
+        confidence: 5,
+        mistakes: [],
+        lessons: '',
+        improvement: '',
+        tags: ['mt5-import', 'real-time'],
+        strategy: magicNumber > 0 ? `MT5 Magic ${magicNumber}` : 'MT5 Sync',
+        source: 'mt5',
+        mt5PositionId: Number(positionId),
+        accountNumber: Number(accountNumber),
+        brokerName,
+        serverName,
+      },
+    });
+
+    console.log(`[MT5 EA Sync] Trade ${tradeId} saved directly to PostgreSQL for user ${userId}`);
+
+    // Buffer the notification so the client-side context knows to update
+    earRetryBuffer.push({ id: tradeId, userId });
 
     return NextResponse.json({
       success: true,
@@ -210,7 +209,7 @@ export async function POST(request: NextRequest) {
 
 /**
  * GET /api/mt5/trades
- * Client background process calls this to fetch any newly buffered EA trades (local-mode only)
+ * Client background process calls this to fetch any newly buffered EA trades notifications (local-mode only)
  */
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
@@ -227,7 +226,7 @@ export async function GET(request: NextRequest) {
 
 /**
  * DELETE /api/mt5/trades
- * Client calls this to clear successfully downloaded trades from local buffer
+ * Client calls this to clear successfully downloaded trades from local notification buffer
  */
 export async function DELETE(request: NextRequest) {
   const { searchParams } = new URL(request.url);

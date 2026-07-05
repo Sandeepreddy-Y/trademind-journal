@@ -1,4 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { authenticateRequest, unauthorizedResponse } from '@/lib/auth';
+import fs from 'fs';
+import path from 'path';
 
 /**
  * MT5 Trade Sync — Incoming payload shape from SyncTrades.mq5
@@ -138,12 +141,50 @@ function transformMT5Trade(mt5: MT5TradePayload, userId: string) {
   };
 }
 
-// In-memory store for synced trades (picked up by client via GET)
-// In production you'd write directly to Firestore here, but for a client-side
-// Firebase auth flow we buffer them for the authenticated client to fetch.
-let pendingTrades: ReturnType<typeof transformMT5Trade>[] = [];
-let lastSyncTimestamp = 0;
-let lastSyncCount = 0;
+const PENDING_FILE = path.join(process.cwd(), 'src/lib/pending_trades.json');
+
+// Ensure the directory exists
+try {
+  const dir = path.dirname(PENDING_FILE);
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
+  }
+} catch (e) {
+  console.error('Failed to create pending trades directory', e);
+}
+
+// Helper to read persistent pending trades
+function getPendingData(): Record<string, { trades: any[], lastSync: number, lastCount: number }> {
+  try {
+    if (fs.existsSync(PENDING_FILE)) {
+      const data = fs.readFileSync(PENDING_FILE, 'utf-8');
+      return JSON.parse(data);
+    }
+  } catch (error) {
+    console.error('[MT5 Sync] Error reading pending file:', error);
+  }
+  return {};
+}
+
+// Helper to write persistent pending trades
+function savePendingData(data: Record<string, { trades: any[], lastSync: number, lastCount: number }>) {
+  try {
+    fs.writeFileSync(PENDING_FILE, JSON.stringify(data, null, 2), 'utf-8');
+  } catch (error) {
+    console.error('[MT5 Sync] Error writing pending file:', error);
+  }
+}
+
+// Helper to clear pending trades for a user
+function clearPendingForUser(userId: string): number {
+  const data = getPendingData();
+  const cleared = data[userId]?.trades?.length || 0;
+  if (data[userId]) {
+    delete data[userId];
+    savePendingData(data);
+  }
+  return cleared;
+}
 
 /**
  * POST /api/sync-trades
@@ -160,26 +201,35 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Use the apiKey as the userId identifier
-    // In production, validate this against Firestore
-    const userId = body.apiKey || 'anonymous';
+    const userId = body.apiKey;
+    if (!userId) {
+      return NextResponse.json(
+        { error: 'API Key (apiKey) is required' },
+        { status: 400 }
+      );
+    }
 
     const transformed = body.trades.map((mt5Trade) =>
       transformMT5Trade(mt5Trade, userId)
     );
 
-    // Buffer for client pickup
-    pendingTrades = transformed;
-    lastSyncTimestamp = Date.now();
-    lastSyncCount = transformed.length;
+    // Save to persistent file
+    const allPending = getPendingData();
+    const now = Date.now();
+    allPending[userId] = {
+      trades: transformed,
+      lastSync: now,
+      lastCount: transformed.length
+    };
+    savePendingData(allPending);
 
-    console.log(`[MT5 Sync] Received ${transformed.length} trades from MT5`);
+    console.log(`[MT5 Sync] Received and persisted ${transformed.length} trades from MT5 for user ${userId}`);
 
     return NextResponse.json({
       success: true,
       message: `Imported ${transformed.length} trades successfully`,
       count: transformed.length,
-      timestamp: lastSyncTimestamp,
+      timestamp: now,
     });
   } catch (error: any) {
     console.error('[MT5 Sync] Error processing trades:', error);
@@ -194,24 +244,53 @@ export async function POST(request: NextRequest) {
  * GET /api/sync-trades
  * Client polls this to pick up buffered MT5 trades
  */
-export async function GET() {
-  return NextResponse.json({
-    trades: pendingTrades,
-    count: pendingTrades.length,
-    lastSync: lastSyncTimestamp,
-    lastCount: lastSyncCount,
-  });
+export async function GET(request: NextRequest) {
+  try {
+    const user = authenticateRequest(request);
+    if (!user) {
+      return unauthorizedResponse();
+    }
+
+    const data = getPendingData();
+    const userPending = data[user.userId] || { trades: [], lastSync: 0, lastCount: 0 };
+
+    return NextResponse.json({
+      trades: userPending.trades,
+      count: userPending.trades.length,
+      lastSync: userPending.lastSync,
+      lastCount: userPending.lastCount,
+    });
+  } catch (error: any) {
+    console.error('[MT5 Sync GET] Error:', error);
+    return NextResponse.json(
+      { error: 'Failed to retrieve synced trades' },
+      { status: 500 }
+    );
+  }
 }
 
 /**
  * DELETE /api/sync-trades
  * Client calls this after successfully importing trades to clear the buffer
  */
-export async function DELETE() {
-  const cleared = pendingTrades.length;
-  pendingTrades = [];
-  return NextResponse.json({
-    success: true,
-    cleared,
-  });
+export async function DELETE(request: NextRequest) {
+  try {
+    const user = authenticateRequest(request);
+    if (!user) {
+      return unauthorizedResponse();
+    }
+
+    const cleared = clearPendingForUser(user.userId);
+
+    return NextResponse.json({
+      success: true,
+      cleared,
+    });
+  } catch (error: any) {
+    console.error('[MT5 Sync DELETE] Error:', error);
+    return NextResponse.json(
+      { error: 'Failed to clear sync buffer' },
+      { status: 500 }
+    );
+  }
 }
