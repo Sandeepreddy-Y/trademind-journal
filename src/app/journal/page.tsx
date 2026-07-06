@@ -30,7 +30,7 @@ import {
 
 export default function Journal() {
   const { user, loading: authLoading } = useAuth();
-  const { trades, deleteTrade, bulkAddTrades, loading: tradesLoading } = useTrades();
+  const { trades, deleteTrade, bulkAddTrades, importMT5HtmlReport, loading: tradesLoading } = useTrades();
   const router = useRouter();
 
   // Search & Filter States
@@ -126,160 +126,23 @@ export default function Journal() {
 
     try {
       const text = await file.text();
-      let parsedTrades: any[] = [];
 
       // Check if MT5 HTML report or CSV
       const isHtml = file.name.endsWith('.html') || file.name.endsWith('.htm') || text.includes('<html') || text.includes('<table');
 
-      const parseNumberSafe = (val: string): number => {
-        if (!val) return 0;
-        // Clean non-breaking spaces, regular spaces, commas, and standard currency suffixes (e.g. USD, EUR)
-        const clean = val.replace(/[\xa0\s,]/g, '').replace(/[a-z]{3}$/i, '');
-        const num = parseFloat(clean);
-        return isNaN(num) ? 0 : num;
-      };
-
       if (isHtml) {
-        // Parse HTML report using a dynamic table column mapper to support MT4 & MT5 variations
-        const parser = new DOMParser();
-        const doc = parser.parseFromString(text, 'text/html');
-        const tables = doc.querySelectorAll('table');
-
-        tables.forEach((table) => {
-          const rows = Array.from(table.querySelectorAll('tr'));
-          if (rows.length < 2) return;
-
-          // Locate the transaction/positions table header
-          let headerRowIndex = -1;
-          let colIndices = {
-            position: -1,
-            openTime: -1,
-            closeTime: -1,
-            type: -1,
-            volume: -1,
-            symbol: -1,
-            openPrice: -1,
-            closePrice: -1,
-            sl: -1,
-            tp: -1,
-            commission: -1,
-            swap: -1,
-            profit: -1,
-            comment: -1
-          };
-
-          for (let r = 0; r < Math.min(rows.length, 10); r++) {
-            const cells = Array.from(rows[r].querySelectorAll('th, td')).map(c => c.textContent?.trim().toLowerCase() || '');
-            
-            // Check if this row looks like the main closed positions header
-            const hasSymbol = cells.includes('symbol') || cells.includes('item');
-            const hasTicket = cells.includes('position') || cells.includes('ticket') || cells.includes('deal');
-            const hasProfit = cells.includes('profit');
-            
-            if (hasSymbol && hasTicket && hasProfit) {
-              headerRowIndex = r;
-              let timeOccurrences = 0;
-              let priceOccurrences = 0;
-
-              cells.forEach((cellText, idx) => {
-                if (cellText.includes('position') || cellText.includes('ticket') || cellText.includes('deal')) {
-                  colIndices.position = idx;
-                } else if (cellText.includes('time')) {
-                  timeOccurrences++;
-                  if (timeOccurrences === 1) colIndices.openTime = idx;
-                  else colIndices.closeTime = idx;
-                } else if (cellText.includes('type')) {
-                  colIndices.type = idx;
-                } else if (cellText.includes('volume') || cellText.includes('size') || cellText.includes('lots')) {
-                  colIndices.volume = idx;
-                } else if (cellText.includes('symbol') || cellText.includes('item')) {
-                  colIndices.symbol = idx;
-                } else if (cellText.includes('price')) {
-                  priceOccurrences++;
-                  if (priceOccurrences === 1) colIndices.openPrice = idx;
-                  else colIndices.closePrice = idx;
-                } else if (cellText.includes('s / l') || cellText.includes('sl') || cellText.includes('s/l')) {
-                  colIndices.sl = idx;
-                } else if (cellText.includes('t / p') || cellText.includes('tp') || cellText.includes('t/p')) {
-                  colIndices.tp = idx;
-                } else if (cellText.includes('commission')) {
-                  colIndices.commission = idx;
-                } else if (cellText.includes('swap')) {
-                  colIndices.swap = idx;
-                } else if (cellText.includes('profit')) {
-                  colIndices.profit = idx;
-                } else if (cellText.includes('comment')) {
-                  colIndices.comment = idx;
-                }
-              });
-              break;
-            }
-          }
-
-          if (headerRowIndex === -1) return;
-
-          // Parse records below the header row
-          for (let r = headerRowIndex + 1; r < rows.length; r++) {
-            const cells = Array.from(rows[r].querySelectorAll('td')).map(td => td.textContent?.trim() || '');
-            if (cells.length < 8) continue;
-
-            const ticketVal = parseInt(cells[colIndices.position] || '');
-            if (isNaN(ticketVal) || ticketVal <= 0) continue;
-
-            const typeRaw = (cells[colIndices.type] || '').toLowerCase();
-            if (!typeRaw.includes('buy') && !typeRaw.includes('sell')) continue;
-
-            const symbol = cells[colIndices.symbol] || '';
-            if (!symbol || symbol.toLowerCase().includes('total') || symbol.toLowerCase().includes('balance')) continue;
-
-            const volume = parseNumberSafe(cells[colIndices.volume]);
-            const entryPrice = parseNumberSafe(cells[colIndices.openPrice]);
-            const exitPrice = parseNumberSafe(cells[colIndices.closePrice]);
-            const sl = parseNumberSafe(cells[colIndices.sl]);
-            const tp = parseNumberSafe(cells[colIndices.tp]);
-            const commission = parseNumberSafe(cells[colIndices.commission]);
-            const swap = parseNumberSafe(cells[colIndices.swap]);
-            const profit = parseNumberSafe(cells[colIndices.profit]);
-
-            const openTimeRaw = (cells[colIndices.openTime] || '').replace(/\./g, '-');
-            const openParts = openTimeRaw.split(' ');
-            const entryDate = openParts[0] || new Date().toISOString().split('T')[0];
-            const entryTime = openParts[1] ? openParts[1].substring(0, 5) : '00:00';
-
-            const comment = cells[colIndices.comment] || '';
-
-            parsedTrades.push({
-              pair: symbol.toUpperCase(),
-              direction: typeRaw.includes('buy') ? 'Buy' : 'Sell',
-              lotSize: volume,
-              entryPrice: entryPrice,
-              stopLoss: sl,
-              takeProfit: tp,
-              exitPrice: exitPrice,
-              commission: commission,
-              swap: swap,
-              pnl: profit,
-              date: entryDate,
-              time: entryTime,
-              notes: `Imported from MT Report. Comment: ${comment}`,
-              reason: 'MT HTML Import',
-              logic: 'Imported trade history',
-              entryConfirmations: [],
-              emotion: 'Calm',
-              confidence: 5,
-              mistakes: [],
-              lessons: '',
-              improvement: '',
-              tags: ['mt-import', 'html-upload'],
-              strategy: 'MT Import',
-              riskPct: 1,
-              rewardPct: 2,
-              mt5Ticket: ticketVal,
-              source: 'MetaTrader HTML'
-            });
-          }
-        });
+        const result = await importMT5HtmlReport(file);
+        setImportFeedback(result);
       } else {
+        const parseNumberSafe = (val: string): number => {
+          if (!val) return 0;
+          // Clean non-breaking spaces, regular spaces, commas, and standard currency suffixes (e.g. USD, EUR)
+          const clean = val.replace(/[\xa0\s,]/g, '').replace(/[a-z]{3}$/i, '');
+          const num = parseFloat(clean);
+          return isNaN(num) ? 0 : num;
+        };
+
+        let parsedTrades: any[] = [];
         // Parse CSV file
         const lines = text.split('\n');
         if (lines.length < 2) {
@@ -352,14 +215,14 @@ export default function Journal() {
             });
           }
         }
-      }
 
-      if (parsedTrades.length === 0) {
-        throw new Error('No valid trades found in the file. Ensure the table columns or CSV headers match.');
-      }
+        if (parsedTrades.length === 0) {
+          throw new Error('No valid trades found in the file. Ensure the table columns or CSV headers match.');
+        }
 
-      const result = await bulkAddTrades(parsedTrades);
-      setImportFeedback(result);
+        const result = await bulkAddTrades(parsedTrades);
+        setImportFeedback(result);
+      }
     } catch (err: any) {
       console.error(err);
       setImportError(err.message || 'Failed to process file');

@@ -35,6 +35,7 @@ interface TradeContextType {
   bulkAddTrades: (
     newTradesList: Omit<Trade, 'id' | 'userId' | 'day' | 'week' | 'month' | 'year' | 'session' | 'holdingTime' | 'rr' | 'pnl' | 'status' | 'createdAt'>[]
   ) => Promise<{ imported: number; skipped: number }>;
+  importMT5HtmlReport: (file: File) => Promise<{ imported: number; skipped: number }>;
 }
 
 const TradeContext = createContext<TradeContextType | undefined>(undefined);
@@ -503,6 +504,41 @@ export const TradeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     };
   };
 
+  const importMT5HtmlReport = async (file: File): Promise<{ imported: number; skipped: number }> => {
+    if (!user) throw new Error('Authentication required');
+
+    const token = localStorage.getItem('token');
+    const formData = new FormData();
+    formData.append('file', file);
+
+    const res = await fetch('/api/trades/import/html', {
+      method: 'POST',
+      headers: {
+        ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+      },
+      body: formData
+    });
+
+    const data = await res.json();
+    if (!res.ok || !data.success) {
+      throw new Error(data.error || 'Failed to import MT5 HTML report');
+    }
+
+    // Refresh trades
+    const tradesRes = await fetch('/api/trades?limit=500', getRequestOptions('GET'));
+    if (tradesRes.ok) {
+      const tradesData = await tradesRes.json();
+      if (tradesData.success && tradesData.trades) {
+        setTrades(tradesData.trades.map(mapDbTradeToFrontendTrade));
+      }
+    }
+
+    return { 
+      imported: data.data?.imported || 0, 
+      skipped: data.data?.skipped || 0 
+    };
+  };
+
   return (
     <TradeContext.Provider
       value={{
@@ -520,6 +556,7 @@ export const TradeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         importMT5Trades,
         syncBrokerTrades,
         bulkAddTrades,
+        importMT5HtmlReport,
       }}
     >
       {children}
