@@ -80,8 +80,27 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Read file content
-    const htmlContent = await file.text();
+    // Read file content with UTF-16 / UTF-8 auto-detection (MT5 HTML reports are often UTF-16LE)
+    const arrayBuffer = await file.arrayBuffer();
+    const uint8 = new Uint8Array(arrayBuffer);
+    let encoding = 'utf-8';
+    if (uint8.length >= 2) {
+      if (uint8[0] === 0xff && uint8[1] === 0xfe) {
+        encoding = 'utf-16le';
+      } else if (uint8[0] === 0xfe && uint8[1] === 0xff) {
+        encoding = 'utf-16be';
+      } else {
+        let nullCount = 0;
+        const scanLength = Math.min(uint8.length, 100);
+        for (let i = 1; i < scanLength; i += 2) {
+          if (uint8[i] === 0) nullCount++;
+        }
+        if (nullCount > (scanLength / 2) * 0.7) {
+          encoding = 'utf-16le';
+        }
+      }
+    }
+    const htmlContent = new TextDecoder(encoding).decode(uint8);
 
     if (!htmlContent || htmlContent.trim().length === 0) {
       return corsJsonResponse(
