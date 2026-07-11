@@ -356,9 +356,18 @@ export function parseMT5HTML(html: string): MT5ParseResult {
       }
     }
 
-    // Handle case where entry and exit prices might be in the same "price" column
-    // In some MT5 formats, there's a single "price" column per row, with separate open/close rows
-    // But in "Positions" table, typically there are separate columns
+    // Resolve duplicate column names (e.g. MT5 using 'time' and 'price' for both entry and exit)
+    const timeIndices = headers.map((h, idx) => (h === 'time' || h.includes('time') || h.includes('date')) ? idx : -1).filter(idx => idx !== -1);
+    if (timeIndices.length >= 2 && colMap['closeTime'] === undefined) {
+      colMap['openTime'] = timeIndices[0];
+      colMap['closeTime'] = timeIndices[1];
+    }
+
+    const priceIndices = headers.map((h, idx) => (h === 'price' || h.includes('price')) ? idx : -1).filter(idx => idx !== -1);
+    if (priceIndices.length >= 2 && colMap['exitPrice'] === undefined) {
+      colMap['entryPrice'] = priceIndices[0];
+      colMap['exitPrice'] = priceIndices[1];
+    }
 
     logger.debug('MT5 Parser: Column mapping', 'MT5Parser', colMap);
 

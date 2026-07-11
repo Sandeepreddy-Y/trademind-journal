@@ -521,7 +521,9 @@ export const TradeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
     const data = await res.json();
     if (!res.ok || !data.success) {
-      throw new Error(data.error || 'Failed to import MT5 HTML report');
+      const errorMsg = data.error || 'Failed to import MT5 HTML report';
+      const detailsMsg = data.details && Array.isArray(data.details) ? `: ${data.details.join(', ')}` : '';
+      throw new Error(`${errorMsg}${detailsMsg}`);
     }
 
     // Refresh trades
