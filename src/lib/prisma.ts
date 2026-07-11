@@ -8,7 +8,31 @@ const globalForPrisma = globalThis as unknown as {
   pool: Pool | undefined;
 };
 
-const connectionString = process.env.DATABASE_URL || 'postgresql://postgres:postgres@localhost:5432/placeholder_db?sslmode=disable';
+function getRealConnectionString(urlStr: string | undefined): string {
+  if (!urlStr) {
+    return 'postgresql://postgres:postgres@localhost:5432/placeholder_db?sslmode=disable';
+  }
+  
+  if (urlStr.startsWith('prisma+postgres://')) {
+    try {
+      const url = new URL(urlStr);
+      const apiKey = url.searchParams.get('api_key');
+      if (apiKey) {
+        const decoded = Buffer.from(apiKey, 'base64').toString('utf-8');
+        const payload = JSON.parse(decoded);
+        if (payload.databaseUrl) {
+          return payload.databaseUrl;
+        }
+      }
+    } catch (e) {
+      console.error("Failed to parse prisma+postgres URL, falling back to original", e);
+    }
+  }
+  
+  return urlStr;
+}
+
+const connectionString = getRealConnectionString(process.env.DATABASE_URL);
 
 const pool = globalForPrisma.pool ?? new Pool({ 
   connectionString,
