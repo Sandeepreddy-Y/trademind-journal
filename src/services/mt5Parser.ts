@@ -205,21 +205,17 @@ export function validateMT5HTML(html: string): { valid: boolean; error?: string 
     return { valid: false, error: 'File too large (max 10MB)' };
   }
 
-  // Check for MetaTrader indicators
+  // Check for HTML structure to ensure it's a valid HTML file
   const lowerHtml = html.toLowerCase();
-  const hasMetaTrader =
-    lowerHtml.includes('metatrader') ||
-    lowerHtml.includes('metaquotes') ||
-    lowerHtml.includes('positions') ||
-    lowerHtml.includes('trade history') ||
-    lowerHtml.includes('trading history') ||
-    lowerHtml.includes('account:') ||
-    lowerHtml.includes('detailed trading history');
+  const hasHtmlStructure =
+    lowerHtml.includes('<table') ||
+    lowerHtml.includes('<tr') ||
+    lowerHtml.includes('<html');
 
-  if (!hasMetaTrader) {
+  if (!hasHtmlStructure) {
     return {
       valid: false,
-      error: 'This does not appear to be a valid MetaTrader 5 report. Please export your trade history from MT5 as an HTML report.',
+      error: 'This does not appear to be a valid HTML report. Please export your trade history from MT5 as an HTML report.',
     };
   }
 
@@ -269,16 +265,20 @@ export function parseMT5HTML(html: string): MT5ParseResult {
       if (
         tableHtml.includes('position') ||
         tableHtml.includes('ticket') ||
-        tableHtml.includes('symbol')
+        tableHtml.includes('symbol') ||
+        tableHtml.includes('pair') ||
+        tableHtml.includes('instrument') ||
+        tableHtml.includes('order') ||
+        tableHtml.includes('#')
       ) {
         // Find the header row within this table
         $(table).find('tr').each((_, row) => {
           const rowText = $(row).text().toLowerCase();
-          // A valid positions header should contain most of these
-          const hasTicket = rowText.includes('ticket') || rowText.includes('position');
-          const hasSymbol = rowText.includes('symbol');
-          const hasVolume = rowText.includes('volume') || rowText.includes('lot');
-          const hasPrice = rowText.includes('price');
+          // A valid positions header should contain most of these (including translations/synonyms)
+          const hasTicket = rowText.includes('ticket') || rowText.includes('position') || rowText.includes('#') || rowText.includes('id') || rowText.includes('order') || rowText.includes('auftrag') || rowText.includes('transaktion');
+          const hasSymbol = rowText.includes('symbol') || rowText.includes('pair') || rowText.includes('instrument') || rowText.includes('asset') || rowText.includes('wertpapier') || rowText.includes('símbolo') || rowText.includes('simbolo');
+          const hasVolume = rowText.includes('volume') || rowText.includes('lot') || rowText.includes('lots') || rowText.includes('size') || rowText.includes('volumen');
+          const hasPrice = rowText.includes('price') || rowText.includes('preis') || rowText.includes('precio') || rowText.includes('open price') || rowText.includes('close price');
           
           if (hasTicket && hasSymbol && (hasVolume || hasPrice)) {
             positionsTable = $(table);
@@ -298,10 +298,9 @@ export function parseMT5HTML(html: string): MT5ParseResult {
           const cells = $(row).find('td, th');
           if (cells.length >= 6) {
             const rowText = $(row).text().toLowerCase();
-            if (
-              (rowText.includes('ticket') || rowText.includes('position')) &&
-              rowText.includes('symbol')
-            ) {
+            const hasTicket = rowText.includes('ticket') || rowText.includes('position') || rowText.includes('#') || rowText.includes('id') || rowText.includes('order') || rowText.includes('auftrag') || rowText.includes('transaktion');
+            const hasSymbol = rowText.includes('symbol') || rowText.includes('pair') || rowText.includes('instrument') || rowText.includes('asset') || rowText.includes('wertpapier') || rowText.includes('símbolo') || rowText.includes('simbolo');
+            if (hasTicket && hasSymbol) {
               positionsTable = $(table);
               headerRow = $(row);
               return false;
@@ -330,18 +329,18 @@ export function parseMT5HTML(html: string): MT5ParseResult {
     // Build column index map
     const colMap: Record<string, number> = {};
     const columnMappings: Record<string, string[]> = {
-      ticket: ['ticket', 'position', 'position id', '#'],
-      symbol: ['symbol', 'instrument', 'pair'],
-      type: ['type', 'direction', 'buy/sell', 'side'],
-      volume: ['volume', 'lot', 'lots', 'size'],
-      entryPrice: ['price', 'open price', 'entry price', 'entry'],
-      exitPrice: ['close price', 'exit price', 'price close', 'exit'],
+      ticket: ['ticket', 'position', 'position id', '#', 'order', 'auftrag', 'transaktion', 'id'],
+      symbol: ['symbol', 'instrument', 'pair', 'wertpapier', 'símbolo', 'simbolo', 'asset'],
+      type: ['type', 'direction', 'buy/sell', 'side', 'typ', 'richtung'],
+      volume: ['volume', 'lot', 'lots', 'size', 'volumen', 'lotsize', 'lots size'],
+      entryPrice: ['price', 'open price', 'entry price', 'entry', 'preis', 'eröffnungspreis', 'precio'],
+      exitPrice: ['close price', 'exit price', 'price close', 'exit', 'schlusspreis', 'precio de cierre'],
       stopLoss: ['s/l', 'sl', 'stop loss', 'stoploss', 's / l'],
       takeProfit: ['t/p', 'tp', 'take profit', 'takeprofit', 't / p'],
-      openTime: ['time', 'open time', 'open date', 'entry time', 'open'],
-      closeTime: ['close time', 'close date', 'exit time', 'close'],
-      profit: ['profit', 'p/l', 'pnl', 'result', 'net profit'],
-      commission: ['commission', 'comm', 'fee'],
+      openTime: ['time', 'open time', 'open date', 'entry time', 'open', 'zeit', 'fecha', 'hora'],
+      closeTime: ['close time', 'close date', 'exit time', 'close', 'schließungszeit'],
+      profit: ['profit', 'p/l', 'pnl', 'result', 'net profit', 'gewinn', 'beneficio'],
+      commission: ['commission', 'comm', 'fee', 'provision', 'comisión'],
       swap: ['swap', 'rollover'],
     };
 
