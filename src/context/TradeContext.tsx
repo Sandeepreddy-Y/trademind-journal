@@ -507,7 +507,7 @@ export const TradeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const importMT5HtmlReport = async (file: File): Promise<{ imported: number; skipped: number }> => {
     if (!user) throw new Error('Authentication required');
 
-    const token = localStorage.getItem('token');
+    const token = typeof window !== 'undefined' ? localStorage.getItem('trademind_token') : null;
     const formData = new FormData();
     formData.append('file', file);
 
